@@ -17,6 +17,8 @@ use RuntimeException;
  */
 class InventoryService
 {
+    public function __construct(protected NotificationService $notifications) {}
+
     /**
      * Apply a transfer's line items to inventory: decrement the source holding
      * and create / increment the destination holding, logging each movement.
@@ -44,6 +46,7 @@ class InventoryService
 
                 // Decrement source.
                 $source->decrement('quantity', $line->quantity);
+                $this->maybeAlertLowStock($source);
 
                 // Resolve destination attributes from the transfer routing.
                 [$toLocation, $toHolderId, $toHospitalId, $stockType] = $this->resolveDestination($transfer);
@@ -142,18 +145,28 @@ class InventoryService
         );
     }
 
-    /** Record a raw stock adjustment (e.g. from a stock count correction). */
-    public function adjust(InventoryItem $item, int $delta, string $reason, ?int $userId = null, $reference = null): StockMovement
-    {
-        return DB::transaction(function () use ($item, $delta, $reason, $userId, $reference) {
+    /**
+     * Record a raw stock adjustment — manual edits ('adjustment') or stock-count
+     * corrections ('count_correction'). Always writes a ledger entry so the
+     * movement history stays the single source of truth.
+     */
+    public function adjust(
+        InventoryItem $item,
+        int $delta,
+        string $reason,
+        ?int $userId = null,
+        $reference = null,
+        string $movementType = 'adjustment',
+    ): StockMovement {
+        return DB::transaction(function () use ($item, $delta, $reason, $userId, $reference, $movementType) {
             $item->increment('quantity', $delta);
 
-            return $this->log([
+            $movement = $this->log([
                 'inventory_item_id' => $item->id,
                 'ref_code'          => $item->ref_code,
                 'lot_number'        => $item->lot_number,
                 'quantity'          => abs($delta),
-                'movement_type'     => 'count_correction',
+                'movement_type'     => $movementType,
                 'from_location'     => $delta < 0 ? $item->location?->value : null,
                 'to_location'       => $delta > 0 ? $item->location?->value : null,
                 'reference_type'    => $reference ? $reference::class : null,
@@ -161,6 +174,12 @@ class InventoryService
                 'performed_by'      => $userId,
                 'notes'             => $reason,
             ]);
+
+            if ($delta < 0) {
+                $this->maybeAlertLowStock($item);
+            }
+
+            return $movement;
         });
     }
 
@@ -169,5 +188,25 @@ class InventoryService
         $attributes['moved_at'] ??= now();
 
         return StockMovement::create($attributes);
+    }
+
+    /**
+     * Real-time low-stock alert (Module 11): if a holding has just dropped to or
+     * below its threshold, notify staff immediately rather than waiting for the
+     * daily batch check.
+     */
+    protected function maybeAlertLowStock(InventoryItem $item): void
+    {
+        $item->refresh();
+
+        if ($item->quantity > 0 && $item->is_low_stock) {
+            $this->notifications->inventoryAlert(
+                $item,
+                'low_stock',
+                'low_stock',
+                "{$item->ref_code} dropped to {$item->quantity} on hand"
+                    .($item->min_threshold ? " (threshold {$item->min_threshold})" : '').'.',
+            );
+        }
     }
 }

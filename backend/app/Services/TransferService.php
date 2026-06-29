@@ -38,6 +38,12 @@ class TransferService
     public function createSourceToBoot(array $data, User $requester): Transfer
     {
         return DB::transaction(function () use ($data, $requester) {
+            $this->assertAvailability(
+                $data['items'] ?? [],
+                $data['from_holder_user_id'] ?? null,
+                $data['from_location'] ?? null,
+            );
+
             $transfer = Transfer::create([
                 'reference'           => ReferenceGenerator::next(Transfer::class, 'reference', 'TR1'),
                 'type'                => TransferType::SourceToBoot->value,
@@ -60,6 +66,13 @@ class TransferService
     public function createBootToHospital(array $data, User $requester): Transfer
     {
         return DB::transaction(function () use ($data, $requester) {
+            // Source is the rep's boot — verify they actually hold enough stock.
+            $this->assertAvailability(
+                $data['items'] ?? [],
+                $data['from_holder_user_id'] ?? $requester->id,
+                StockLocation::BootStock->value,
+            );
+
             $transfer = Transfer::create([
                 'reference'           => ReferenceGenerator::next(Transfer::class, 'reference', 'TR2'),
                 'type'                => TransferType::BootToHospital->value,
@@ -157,6 +170,7 @@ class TransferService
         $pdf = $this->pdf->generateDeliveryNote($transfer);
         $this->notifications->transferCompleted($transfer, $pdf); // emails delivery note
         $transfer->update(['status' => TransferStatus::AwaitingAdminReview->value]);
+        $this->notifications->transferAwaitingAdminReview($transfer); // nudge admins to review
 
         return $transfer->fresh();
     }
@@ -213,6 +227,43 @@ class TransferService
                 'expiry_date'       => $row['expiry_date'] ?? $source?->expiry_date,
                 'unit_price'        => $row['unit_price'] ?? $source?->unit_price,
             ]);
+        }
+    }
+
+    /**
+     * Reject a transfer at creation time if the source doesn't currently hold
+     * enough stock — so requesters find out immediately, not at completion.
+     */
+    protected function assertAvailability(array $items, ?int $fromHolderId, ?string $fromLocation): void
+    {
+        foreach ($items as $row) {
+            $needed = (int) ($row['quantity'] ?? 0);
+            if ($needed <= 0) {
+                continue;
+            }
+
+            if (! empty($row['inventory_item_id'])) {
+                $available = (int) (InventoryItem::whereKey($row['inventory_item_id'])->value('quantity') ?? 0);
+                $label = $row['ref_code'] ?? ('item #'.$row['inventory_item_id']);
+            } else {
+                $query = InventoryItem::query()->where('ref_code', $row['ref_code'] ?? '');
+                if (! empty($row['lot_number'])) {
+                    $query->where('lot_number', $row['lot_number']);
+                }
+                if ($fromHolderId) {
+                    $query->where('holder_user_id', $fromHolderId);
+                } elseif ($fromLocation) {
+                    $query->where('location', $fromLocation);
+                }
+                $available = (int) $query->sum('quantity');
+                $label = $row['ref_code'] ?? 'item';
+            }
+
+            if ($available < $needed) {
+                throw ValidationException::withMessages([
+                    'items' => "Only {$available} unit(s) of {$label} available at the source; you requested {$needed}.",
+                ]);
+            }
         }
     }
 

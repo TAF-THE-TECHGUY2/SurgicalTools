@@ -52,11 +52,27 @@ class InventoryItemController extends Controller
         return (new InventoryItemResource($item))->response()->setStatusCode(201);
     }
 
-    public function update(Request $request, InventoryItem $inventoryItem)
+    public function update(Request $request, InventoryItem $inventoryItem, \App\Services\InventoryService $inventory)
     {
         $this->authorize('update', $inventoryItem);
 
-        $inventoryItem->update($this->validateData($request, $inventoryItem));
+        $data = $this->validateData($request, $inventoryItem);
+
+        // Quantity changes must flow through the ledger, not a silent overwrite.
+        $newQty = (int) $data['quantity'];
+        $oldQty = (int) $inventoryItem->quantity;
+        unset($data['quantity']);
+
+        $inventoryItem->update($data);
+
+        if ($newQty !== $oldQty) {
+            $inventory->adjust(
+                $inventoryItem,
+                $newQty - $oldQty,
+                'Manual stock adjustment',
+                $request->user()->id,
+            );
+        }
 
         return new InventoryItemResource($inventoryItem->fresh(['hospital', 'holder']));
     }

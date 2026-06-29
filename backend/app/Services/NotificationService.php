@@ -9,6 +9,7 @@ use App\Models\Transfer;
 use App\Models\User;
 use App\Notifications\InventoryAlertNotification;
 use App\Notifications\StockCountRequestedNotification;
+use App\Notifications\StockCountStatusNotification;
 use App\Notifications\TransferStatusNotification;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Notification as NotificationFacade;
@@ -49,6 +50,16 @@ class NotificationService
         }
     }
 
+    /** Transfer 2 signed — nudge admins that a final review is required. */
+    public function transferAwaitingAdminReview(Transfer $transfer): void
+    {
+        NotificationFacade::send($this->admins(), new TransferStatusNotification(
+            $transfer,
+            'awaiting_admin_review',
+            "Transfer {$transfer->reference} is signed and awaiting your final review.",
+        ));
+    }
+
     /**
      * Transfer completed. Emails the generated PDF to the distribution list
      * and notifies the relevant staff in-app.
@@ -79,6 +90,22 @@ class NotificationService
         if ($count->assignee) {
             $count->assignee->notify(new StockCountRequestedNotification($count));
         }
+    }
+
+    /** A rep submitted a count — notify the requester + admins to review it. */
+    public function stockCountSubmitted(StockCount $count): void
+    {
+        $recipients = $this->admins();
+        if ($count->requester) {
+            $recipients = $recipients->push($count->requester)->unique('id');
+        }
+
+        NotificationFacade::send($recipients, new StockCountStatusNotification(
+            $count,
+            'submitted',
+            "Stock count {$count->reference} was submitted and needs review"
+                .($count->total_variance ? " (variance {$count->total_variance})." : '.'),
+        ));
     }
 
     public function inventoryAlert(\App\Models\InventoryItem $item, string $alertType, string $severity, string $message): void

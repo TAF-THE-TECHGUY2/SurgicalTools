@@ -73,6 +73,8 @@ class StockCountService
                 'submitted_at' => now(),
             ]);
 
+            $this->notifications->stockCountSubmitted($count->fresh('items'));
+
             return $count->fresh('items');
         });
     }
@@ -96,6 +98,7 @@ class StockCountService
                                 "Stock count {$count->reference} correction",
                                 $admin->id,
                                 $count,
+                                'count_correction',
                             );
                         }
                     }

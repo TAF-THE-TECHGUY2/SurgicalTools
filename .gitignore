@@ -26,3 +26,6 @@
 
 # Docker
 *.env.docker
+
+# Claude Code session artifacts
+.claude/
