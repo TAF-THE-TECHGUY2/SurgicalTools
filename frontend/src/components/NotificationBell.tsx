@@ -1,6 +1,6 @@
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { Bell } from 'lucide-react'
+import { Bell, CheckCheck } from 'lucide-react'
 import { api } from '@/lib/api'
 import { fromNow } from '@/lib/format'
 import { useState, useRef, useEffect } from 'react'
@@ -10,6 +10,7 @@ export function NotificationBell() {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
 
   const { data } = useQuery({
     queryKey: ['notifications', 'recent'],
@@ -22,6 +23,19 @@ export function NotificationBell() {
     refetchInterval: 30_000,
   })
 
+  // Refresh both the bell and the full notifications page after any read action.
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: ['notifications'] })
+
+  const markRead = useMutation({
+    mutationFn: async (id: string) => (await api.post(`/notifications/${id}/read`)).data,
+    onSuccess: invalidate,
+  })
+
+  const markAll = useMutation({
+    mutationFn: async () => (await api.post('/notifications/read-all')).data,
+    onSuccess: invalidate,
+  })
+
   useEffect(() => {
     const onClick = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
@@ -32,6 +46,12 @@ export function NotificationBell() {
 
   const unread = data?.unread_count ?? 0
   const items = data?.data ?? []
+
+  const openNotification = (n: AppNotification) => {
+    setOpen(false)
+    if (!n.read_at) markRead.mutate(n.id)
+    if (n.data.link) navigate(n.data.link)
+  }
 
   return (
     <div ref={ref} className="relative">
@@ -52,9 +72,19 @@ export function NotificationBell() {
         <div className="absolute right-0 z-50 mt-2 w-80 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl">
           <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
             <span className="text-sm font-semibold text-slate-700">Notifications</span>
-            <button onClick={() => { setOpen(false); navigate('/notifications') }} className="text-xs text-brand-700 hover:underline">
-              View all
-            </button>
+            <div className="flex items-center gap-3">
+              {unread > 0 && (
+                <button
+                  onClick={() => markAll.mutate()}
+                  className="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-slate-700"
+                >
+                  <CheckCheck className="h-3.5 w-3.5" /> Mark all
+                </button>
+              )}
+              <button onClick={() => { setOpen(false); navigate('/notifications') }} className="text-xs text-brand-700 hover:underline">
+                View all
+              </button>
+            </div>
           </div>
           <div className="max-h-80 overflow-y-auto">
             {items.length === 0 ? (
@@ -63,11 +93,13 @@ export function NotificationBell() {
               items.map((n) => (
                 <button
                   key={n.id}
-                  onClick={() => { setOpen(false); if (n.data.link) navigate(n.data.link) }}
+                  onClick={() => openNotification(n)}
                   className="block w-full border-b border-slate-50 px-4 py-3 text-left hover:bg-slate-50"
                 >
                   <div className="flex items-start gap-2">
-                    {!n.read_at && <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-brand-500" />}
+                    <span className="mt-1.5 flex h-2 w-2 shrink-0">
+                      {!n.read_at && <span className="h-2 w-2 rounded-full bg-brand-500" aria-label="Unread" />}
+                    </span>
                     <div className={n.read_at ? 'opacity-60' : ''}>
                       <p className="text-sm text-slate-700">{n.data.message ?? n.type}</p>
                       <p className="mt-0.5 text-xs text-slate-400">{fromNow(n.created_at)}</p>

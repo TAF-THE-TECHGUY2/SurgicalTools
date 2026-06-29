@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { Plus, AlertTriangle } from 'lucide-react'
+import { Plus, AlertTriangle, Boxes, X, ArrowLeftRight } from 'lucide-react'
 import { api, apiError } from '@/lib/api'
 import { useMeta } from '@/hooks/useMeta'
 import { Can } from '@/auth/Can'
@@ -16,13 +16,14 @@ import { DataTable } from '@/components/ui/Table'
 import type { Column } from '@/components/ui/Table'
 import { LoadingState, ErrorState, EmptyState } from '@/components/ui/States'
 import { formatDate, humanize } from '@/lib/format'
-import type { InventoryItem, Paginated } from '@/types'
+import type { Hospital, InventoryItem, Paginated } from '@/types'
 
 interface Filters {
   q: string
   status: string
   location: string
   stock_type: string
+  hospital_id: string
   low_stock: boolean
   page: number
 }
@@ -32,19 +33,43 @@ export default function InventoryListPage() {
   const queryClient = useQueryClient()
   const toast = useToast()
   const { data: meta } = useMeta()
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
 
   const [filters, setFilters] = useState<Filters>({
     q: searchParams.get('q') ?? '',
     status: '',
     location: '',
     stock_type: '',
+    hospital_id: searchParams.get('hospital_id') ?? '',
     low_stock: searchParams.get('low_stock') === '1',
     page: 1,
   })
 
   const update = (patch: Partial<Filters>) =>
     setFilters((prev) => ({ ...prev, ...patch, page: 'page' in patch ? (patch.page ?? 1) : 1 }))
+
+  // Name of the hospital we're scoped to (for the filter banner).
+  const { data: hospitalFilter } = useQuery({
+    queryKey: ['hospitals', filters.hospital_id],
+    queryFn: async () => (await api.get<Hospital>(`/hospitals/${filters.hospital_id}`)).data,
+    enabled: !!filters.hospital_id,
+  })
+
+  const hasFilters = Boolean(
+    filters.q || filters.status || filters.location || filters.stock_type || filters.hospital_id || filters.low_stock,
+  )
+
+  const clearHospital = () => {
+    update({ hospital_id: '' })
+    const next = new URLSearchParams(searchParams)
+    next.delete('hospital_id')
+    setSearchParams(next, { replace: true })
+  }
+
+  const clearAllFilters = () => {
+    setFilters({ q: '', status: '', location: '', stock_type: '', hospital_id: '', low_stock: false, page: 1 })
+    setSearchParams(new URLSearchParams(), { replace: true })
+  }
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['inventory', filters],
@@ -54,6 +79,7 @@ export default function InventoryListPage() {
       if (filters.status) params.status = filters.status
       if (filters.location) params.location = filters.location
       if (filters.stock_type) params.stock_type = filters.stock_type
+      if (filters.hospital_id) params.hospital_id = filters.hospital_id
       if (filters.low_stock) params.low_stock = 1
       return (await api.get<Paginated<InventoryItem>>('/inventory', { params })).data
     },
@@ -116,6 +142,22 @@ export default function InventoryListPage() {
         }
       />
 
+      {filters.hospital_id && (
+        <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-brand-200 bg-brand-50 px-4 py-2.5 text-sm text-brand-800">
+          <span className="inline-flex items-center gap-2">
+            <Boxes className="h-4 w-4" />
+            Showing stock at <strong>{hospitalFilter?.name ?? 'selected hospital'}</strong>
+          </span>
+          <button
+            type="button"
+            onClick={clearHospital}
+            className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-brand-700 hover:bg-brand-100"
+          >
+            <X className="h-4 w-4" /> Clear
+          </button>
+        </div>
+      )}
+
       <Card className="mb-6">
         <CardBody className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <Field label="Search">
@@ -166,11 +208,34 @@ export default function InventoryListPage() {
       ) : error ? (
         <ErrorState message={apiError(error)} />
       ) : !data || data.data.length === 0 ? (
-        <EmptyState
-          icon={<AlertTriangle className="h-10 w-10" />}
-          title="No inventory found"
-          description="Try adjusting your filters, or add a new stock line."
-        />
+        hasFilters ? (
+          <EmptyState
+            icon={<AlertTriangle className="h-10 w-10" />}
+            title="No inventory matches your filters"
+            description="Try adjusting or clearing your filters to see more stock."
+            action={<Button variant="outline" onClick={clearAllFilters}>Clear filters</Button>}
+          />
+        ) : (
+          <EmptyState
+            icon={<Boxes className="h-10 w-10" />}
+            title="No inventory yet"
+            description="Add your first stock line, or request a transfer to bring stock in."
+            action={
+              <div className="flex flex-wrap justify-center gap-2">
+                <Can permission="inventory.manage">
+                  <Button onClick={() => setCreateOpen(true)}>
+                    <Plus className="h-4 w-4" /> Add item
+                  </Button>
+                </Can>
+                <Can permission="transfer.create">
+                  <Button variant="outline" onClick={() => navigate('/transfers/new')}>
+                    <ArrowLeftRight className="h-4 w-4" /> Request transfer
+                  </Button>
+                </Can>
+              </div>
+            }
+          />
+        )
       ) : (
         <Card>
           <DataTable
