@@ -4,7 +4,7 @@
 # Dev/staging friendly: serves via the built-in server. For production behind
 # nginx, swap the CMD for php-fpm and add nginx + a queue worker (see README).
 # ---------------------------------------------------------------------------
-FROM php:8.3-cli AS base
+FROM php:8.4-cli AS base
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         git unzip libpq-dev libzip-dev libpng-dev libjpeg-dev libfreetype6-dev libonig-dev \
