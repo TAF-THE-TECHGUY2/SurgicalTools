@@ -1,0 +1,8 @@
+# Automatic HTTPS via Let's Encrypt. DOMAIN + ACME_EMAIL come from the env.
+{$DOMAIN} {
+	encode gzip
+	# Everything is served by the frontend container, which itself proxies
+	# /api and /storage to the backend.
+	reverse_proxy frontend:80
+	tls {$ACME_EMAIL}
+}

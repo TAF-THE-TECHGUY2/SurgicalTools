@@ -1,0 +1,78 @@
+# ===========================================================================
+# Surgical Devices ERP — full stack
+#   db        PostgreSQL 16
+#   mailpit   SMTP sink + web UI (catches transfer/delivery-note emails)
+#   backend   Laravel 13 API (migrates + optionally seeds on boot)
+#   frontend  React PWA served by nginx, proxying /api to backend
+#
+#   First run:  docker compose up --build
+#   Seed demo data: set SEED_ON_BOOT=true (already on below) or run
+#     docker compose exec backend php artisan db:seed --force
+#   App:      http://localhost:8080      Mail UI: http://localhost:8025
+# ===========================================================================
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: surgical_erp
+      POSTGRES_USER: surgical
+      POSTGRES_PASSWORD: secret
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U surgical -d surgical_erp"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  mailpit:
+    image: axllent/mailpit:latest
+    ports:
+      - "8025:8025"   # web UI
+      - "1025:1025"   # SMTP
+
+  backend:
+    build:
+      context: ./backend
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      APP_NAME: "Surgical Devices ERP"
+      APP_ENV: local
+      APP_KEY: ${APP_KEY:-}
+      APP_DEBUG: "true"
+      APP_URL: http://localhost:8000
+      FRONTEND_URL: http://localhost:8080
+      DB_CONNECTION: pgsql
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_DATABASE: surgical_erp
+      DB_USERNAME: surgical
+      DB_PASSWORD: secret
+      CACHE_STORE: file
+      SESSION_DRIVER: file
+      QUEUE_CONNECTION: database
+      MAIL_MAILER: smtp
+      MAIL_HOST: mailpit
+      MAIL_PORT: 1025
+      FILESYSTEM_DISK: local
+      SEED_ON_BOOT: "true"
+    ports:
+      - "8000:8000"
+    volumes:
+      - storage_data:/app/storage
+
+  frontend:
+    build:
+      context: ./frontend
+    depends_on:
+      - backend
+    ports:
+      - "8080:80"
+
+volumes:
+  db_data:
+  storage_data:

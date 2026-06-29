@@ -1,0 +1,34 @@
+# ===========================================================================
+# Optional HTTPS layer — adds a Caddy reverse proxy that terminates TLS with
+# an automatic Let's Encrypt certificate and proxies to the frontend.
+#
+# Requires a domain whose DNS A record points at the instance's Elastic IP.
+# Set DOMAIN and ACME_EMAIL in the repo-root .env, then:
+#   APP_URL=https://erp.example.com ./deploy/deploy.sh        # (first run)
+#   docker compose -f docker-compose.yml \
+#     -f deploy/docker-compose.prod.yml \
+#     -f deploy/docker-compose.tls.yml up -d --build
+# ===========================================================================
+services:
+  frontend:
+    ports: []          # no longer public; Caddy fronts it
+
+  caddy:
+    image: caddy:2-alpine
+    depends_on:
+      - frontend
+    environment:
+      DOMAIN: ${DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+  caddy_config:

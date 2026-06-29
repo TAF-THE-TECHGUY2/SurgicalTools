@@ -1,0 +1,28 @@
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Backend (Laravel)
+/backend/vendor/
+/backend/node_modules/
+/backend/.env
+/backend/.env.backup
+/backend/storage/*.key
+/backend/storage/framework/cache/*
+/backend/storage/framework/sessions/*
+/backend/storage/framework/views/*
+/backend/storage/logs/*
+/backend/database/database.sqlite
+/backend/.phpunit.cache
+/backend/public/storage
+
+# Frontend (React/Vite)
+/frontend/node_modules/
+/frontend/dist/
+/frontend/dev-dist/
+/frontend/*.local
+
+# Docker
+*.env.docker
