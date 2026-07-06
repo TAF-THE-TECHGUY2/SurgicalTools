@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Mail\TransferDocumentMail;
 use App\Models\Document;
 use App\Models\StockCount;
+use App\Models\StockItem;
 use App\Models\Transfer;
 use App\Models\User;
 use App\Notifications\InventoryAlertNotification;
@@ -22,22 +23,11 @@ class NotificationService
 {
     public function transferAwaitingApproval(Transfer $transfer): void
     {
-        $approvers = $this->approversFor($transfer);
-
-        NotificationFacade::send($approvers, new TransferStatusNotification(
+        NotificationFacade::send($this->approversFor($transfer), new TransferStatusNotification(
             $transfer,
             'pending_approval',
-            "Transfer {$transfer->reference} ({$transfer->type->label()}) is awaiting your approval.",
+            "Transfer {$transfer->reference} ({$transfer->fromLocation?->name} → {$transfer->toLocation?->name}) is awaiting your approval.",
         ));
-    }
-
-    public function transferApproved(Transfer $transfer): void
-    {
-        if ($requester = $transfer->requester) {
-            $requester->notify(new TransferStatusNotification(
-                $transfer, 'approved', "Your transfer {$transfer->reference} was approved.",
-            ));
-        }
     }
 
     public function transferRejected(Transfer $transfer): void
@@ -50,38 +40,28 @@ class NotificationService
         }
     }
 
-    /** Transfer 2 signed — nudge admins that a final review is required. */
-    public function transferAwaitingAdminReview(Transfer $transfer): void
-    {
-        NotificationFacade::send($this->admins(), new TransferStatusNotification(
-            $transfer,
-            'awaiting_admin_review',
-            "Transfer {$transfer->reference} is signed and awaiting your final review.",
-        ));
-    }
-
     /**
-     * Transfer completed. Emails the generated PDF to the distribution list
-     * and notifies the relevant staff in-app.
+     * Transfer approved & completed. Emails the generated PDF to the
+     * distribution list and notifies the involved parties in-app.
      */
     public function transferCompleted(Transfer $transfer, Document $pdf): void
     {
-        $heading = $transfer->type->value === 'boot_to_hospital'
-            ? 'Delivery Note'
-            : 'Transfer Note';
+        $heading = $transfer->toLocation?->type === 'hospital' ? 'Delivery Note' : 'Transfer Note';
 
-        // Email the PDF to the configured recipients (office / controllers / rep).
         foreach ($this->pdfRecipients($transfer) as $email) {
             Mail::to($email)->queue(new TransferDocumentMail($transfer, $pdf, $heading));
         }
 
-        // In-app notification to requester + assigned rep.
-        $recipients = collect([$transfer->requester, $transfer->toHolder, $transfer->fromHolder])
+        // In-app: requester + owners of the source and destination locations.
+        $recipients = collect([$transfer->requester])
+            ->merge($this->locationUsers($transfer->from_location_id))
+            ->merge($this->locationUsers($transfer->to_location_id))
             ->filter()
             ->unique('id');
 
         NotificationFacade::send($recipients, new TransferStatusNotification(
-            $transfer, 'completed', "Transfer {$transfer->reference} is complete. {$heading} attached.",
+            $transfer, 'completed',
+            "Transfer {$transfer->reference} approved — stock moved to {$transfer->toLocation?->name}. {$heading} attached.",
         ));
     }
 
@@ -108,11 +88,10 @@ class NotificationService
         ));
     }
 
-    public function inventoryAlert(\App\Models\InventoryItem $item, string $alertType, string $severity, string $message): void
+    /** Low-stock / expiry alert for a stock item. */
+    public function stockAlert(StockItem $item, string $alertType, string $severity, string $message): void
     {
-        $recipients = $this->inventoryAlertRecipients($item);
-
-        NotificationFacade::send($recipients, new InventoryAlertNotification(
+        NotificationFacade::send($this->admins(), new InventoryAlertNotification(
             $item, $alertType, $severity, $message,
         ));
     }
@@ -121,20 +100,39 @@ class NotificationService
     /*  Recipient resolution                                                */
     /* -------------------------------------------------------------------- */
 
-    /** Who can approve this transfer (drives the "awaiting approval" notice). */
+    /**
+     * Who can approve this transfer:
+     *  - users linked to the source location (the stock's owner approves it out)
+     *  - the assigned reps of a hospital destination/source
+     *  - all admins.
+     */
     protected function approversFor(Transfer $transfer)
     {
-        if ($transfer->type->value === 'boot_to_hospital' && $transfer->hospital_id) {
-            // Assigned reps/runners for the hospital + all admins.
-            $assigned = User::whereHas('hospitals', fn ($q) => $q->where('hospitals.id', $transfer->hospital_id))->get();
+        $transfer->loadMissing(['fromLocation', 'toLocation']);
 
-            return $assigned->merge($this->admins())->unique('id');
+        $recipients = $this->locationUsers($transfer->from_location_id);
+
+        foreach ([$transfer->fromLocation, $transfer->toLocation] as $location) {
+            if ($location?->hospital_id) {
+                $recipients = $recipients->merge(
+                    User::whereHas('hospitals', fn ($q) => $q->where('hospitals.id', $location->hospital_id))->get()
+                );
+            }
         }
 
-        // Transfer 1: the source owner + admins.
-        $owner = $transfer->from_holder_user_id ? User::find($transfer->from_holder_user_id) : null;
+        return $recipients->merge($this->admins())
+            // The requester shouldn't be nudged to approve their own request.
+            ->reject(fn (User $u) => $u->id === $transfer->requested_by)
+            ->unique('id')
+            ->values();
+    }
 
-        return collect([$owner])->filter()->merge($this->admins())->unique('id');
+    /** Users whose "My Inventory" is the given location. */
+    protected function locationUsers(?int $locationId)
+    {
+        return $locationId
+            ? User::where('location_id', $locationId)->where('is_active', true)->get()
+            : collect();
     }
 
     protected function admins()
@@ -152,18 +150,16 @@ class NotificationService
             config('surgical.notifications.office'),
             config('surgical.notifications.stock_controller'),
             config('surgical.notifications.inventory_controller'),
+            $transfer->requester?->email,
         ];
 
-        if ($transfer->toHolder?->email) {
-            $emails[] = $transfer->toHolder->email; // assigned rep
-        }
-        if ($transfer->fromHolder?->email) {
-            $emails[] = $transfer->fromHolder->email;
+        foreach ($this->locationUsers($transfer->to_location_id) as $user) {
+            $emails[] = $user->email;
         }
 
-        // Transfer 2: also the hospital stock controller contact.
-        if ($transfer->type->value === 'boot_to_hospital' && $transfer->hospital) {
-            $controller = $transfer->hospital->contacts()
+        // Hospital destination: include the hospital's stock controller contact.
+        if ($transfer->toLocation?->hospital_id) {
+            $controller = \App\Models\HospitalContact::where('hospital_id', $transfer->toLocation->hospital_id)
                 ->where('role', 'like', '%stock%')->first();
             if ($controller?->email) {
                 $emails[] = $controller->email;
@@ -171,19 +167,5 @@ class NotificationService
         }
 
         return array_values(array_unique(array_filter($emails)));
-    }
-
-    protected function inventoryAlertRecipients(\App\Models\InventoryItem $item)
-    {
-        $recipients = $this->admins();
-
-        if ($item->holder) {
-            $recipients = $recipients->push($item->holder);
-        }
-        if ($item->hospital) {
-            $recipients = $recipients->merge($item->hospital->users);
-        }
-
-        return $recipients->unique('id');
     }
 }

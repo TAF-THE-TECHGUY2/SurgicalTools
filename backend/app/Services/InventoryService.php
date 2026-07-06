@@ -2,184 +2,121 @@
 
 namespace App\Services;
 
-use App\Enums\StockLocation;
-use App\Enums\StockType;
-use App\Models\InventoryItem;
+use App\Enums\DeviceUnitStatus;
+use App\Models\DeviceUnit;
+use App\Models\Location;
+use App\Models\StockItem;
 use App\Models\StockMovement;
-use App\Models\Transfer;
 use Illuminate\Support\Facades\DB;
-use RuntimeException;
 
 /**
- * Owns all mutations to physical stock. Every quantity change flows through
- * here so the stock_movements ledger stays the single source of truth for the
- * full movement history (Supplier → JHB Warehouse → Mike Boot → Arwyp).
+ * Owns mutations to physical stock in the unit-level model. Every unit that
+ * enters, moves, or leaves the system gets a stock_movements ledger entry.
  */
 class InventoryService
 {
     public function __construct(protected NotificationService $notifications) {}
 
     /**
-     * Apply a transfer's line items to inventory: decrement the source holding
-     * and create / increment the destination holding, logging each movement.
-     * Idempotency is the caller's responsibility (only call once on completion).
+     * Receive new devices into a location (goods receipt / initial capture).
+     * $units: [{serial_number?, lot_number?, expiry_date?}, ...]
+     *
+     * @return \Illuminate\Support\Collection<int, DeviceUnit>
      */
-    public function applyTransfer(Transfer $transfer): void
+    public function receiveUnits(StockItem $item, Location $location, array $units, ?int $userId = null)
     {
-        DB::transaction(function () use ($transfer) {
-            $transfer->loadMissing('items');
+        return DB::transaction(function () use ($item, $location, $units, $userId) {
+            $created = collect();
 
-            foreach ($transfer->items as $line) {
-                $source = $line->inventory_item_id
-                    ? InventoryItem::lockForUpdate()->find($line->inventory_item_id)
-                    : $this->matchSourceHolding($transfer, $line->ref_code, $line->lot_number);
-
-                if (! $source) {
-                    throw new RuntimeException(
-                        "No source holding found for {$line->ref_code} (lot {$line->lot_number}).");
-                }
-
-                if ($source->quantity < $line->quantity) {
-                    throw new RuntimeException(
-                        "Insufficient stock for {$line->ref_code}: have {$source->quantity}, need {$line->quantity}.");
-                }
-
-                // Decrement source.
-                $source->decrement('quantity', $line->quantity);
-                $this->maybeAlertLowStock($source);
-
-                // Resolve destination attributes from the transfer routing.
-                [$toLocation, $toHolderId, $toHospitalId, $stockType] = $this->resolveDestination($transfer);
-
-                $destination = $this->findOrCreateDestination($source, [
-                    'location'       => $toLocation,
-                    'holder_user_id' => $toHolderId,
-                    'hospital_id'    => $toHospitalId,
-                    'stock_type'     => $stockType,
+            foreach ($units as $data) {
+                $unit = $item->units()->create([
+                    'serial_number' => $data['serial_number'] ?? null,
+                    'lot_number'    => $data['lot_number'] ?? null,
+                    'expiry_date'   => $data['expiry_date'] ?? null,
+                    'location_id'   => $location->id,
+                    'status'        => DeviceUnitStatus::Available->value,
                 ]);
-                $destination->increment('quantity', $line->quantity);
-
-                // Link the destination back to the line for traceability.
-                if (! $line->inventory_item_id) {
-                    $line->update(['inventory_item_id' => $destination->id]);
-                }
 
                 $this->log([
-                    'inventory_item_id'   => $destination->id,
-                    'ref_code'            => $line->ref_code,
-                    'lot_number'          => $line->lot_number,
-                    'quantity'            => $line->quantity,
-                    'movement_type'       => 'transfer',
-                    'from_location'       => $source->location?->value,
-                    'to_location'         => $toLocation,
-                    'from_holder_user_id' => $source->holder_user_id,
-                    'to_holder_user_id'   => $toHolderId,
-                    'from_hospital_id'    => $source->hospital_id,
-                    'to_hospital_id'      => $toHospitalId,
-                    'reference_type'      => Transfer::class,
-                    'reference_id'        => $transfer->id,
-                    'performed_by'        => $transfer->reviewed_by ?? $transfer->approved_by ?? $transfer->requested_by,
-                    'notes'               => "Transfer {$transfer->reference}",
+                    'device_unit_id'  => $unit->id,
+                    'ref_code'        => $item->catalogue_number ?? (string) $item->id,
+                    'lot_number'      => $unit->lot_number,
+                    'quantity'        => 1,
+                    'movement_type'   => 'receipt',
+                    'to_location'     => $location->name,
+                    'to_location_id'  => $location->id,
+                    'performed_by'    => $userId,
+                    'notes'           => 'Stock received'.($unit->serial_number ? " · SN {$unit->serial_number}" : ''),
                 ]);
+
+                $created->push($unit);
             }
+
+            return $created;
         });
     }
 
-    /** Resolve [location, holderId, hospitalId, stockType] for the destination. */
-    protected function resolveDestination(Transfer $transfer): array
-    {
-        if ($transfer->type->value === 'source_to_boot') {
-            return [
-                StockLocation::BootStock->value,
-                $transfer->to_holder_user_id,
-                null,
-                StockType::Boot->value,
-            ];
-        }
-
-        // boot_to_hospital
-        return [
-            StockLocation::HospitalStock->value,
-            null,
-            $transfer->hospital_id,
-            $transfer->hospital_stock_type ?? StockType::Consignment->value,
-        ];
-    }
-
-    protected function matchSourceHolding(Transfer $transfer, string $refCode, ?string $lot): ?InventoryItem
-    {
-        $query = InventoryItem::query()
-            ->where('ref_code', $refCode)
-            ->when($lot, fn ($q) => $q->where('lot_number', $lot))
-            ->where('quantity', '>', 0)
-            ->lockForUpdate();
-
-        if ($transfer->from_holder_user_id) {
-            $query->where('holder_user_id', $transfer->from_holder_user_id);
-        } elseif ($transfer->from_location) {
-            $query->where('location', $transfer->from_location);
-        }
-
-        return $query->orderBy('expiry_date')->first(); // FEFO: first-expiry-first-out
-    }
-
-    protected function findOrCreateDestination(InventoryItem $source, array $dest): InventoryItem
-    {
-        return InventoryItem::firstOrCreate(
-            [
-                'ref_code'       => $source->ref_code,
-                'lot_number'     => $source->lot_number,
-                'location'       => $dest['location'],
-                'holder_user_id' => $dest['holder_user_id'],
-                'hospital_id'    => $dest['hospital_id'],
-                'stock_type'     => $dest['stock_type'],
-            ],
-            [
-                'description' => $source->description,
-                'expiry_date' => $source->expiry_date,
-                'status'      => \App\Enums\StockStatus::Available->value,
-                'unit_price'  => $source->unit_price,
-                'uom'         => $source->uom,
-                'quantity'    => 0,
-            ],
-        );
-    }
-
     /**
-     * Record a raw stock adjustment — manual edits ('adjustment') or stock-count
-     * corrections ('count_correction'). Always writes a ledger entry so the
-     * movement history stays the single source of truth.
+     * Write off $count units of an item at a location (e.g. an approved stock
+     * count found them missing). Oldest expiry first.
      */
-    public function adjust(
-        InventoryItem $item,
-        int $delta,
-        string $reason,
-        ?int $userId = null,
-        $reference = null,
-        string $movementType = 'adjustment',
-    ): StockMovement {
-        return DB::transaction(function () use ($item, $delta, $reason, $userId, $reference, $movementType) {
-            $item->increment('quantity', $delta);
+    public function markUnitsMissing(StockItem $item, Location $location, int $count, string $reason, ?int $userId = null, $reference = null): int
+    {
+        return DB::transaction(function () use ($item, $location, $count, $reason, $userId, $reference) {
+            $units = DeviceUnit::where('stock_item_id', $item->id)
+                ->where('location_id', $location->id)
+                ->where('status', DeviceUnitStatus::Available->value)
+                ->orderByRaw('expiry_date IS NULL, expiry_date ASC')
+                ->limit($count)
+                ->lockForUpdate()
+                ->get();
 
-            $movement = $this->log([
-                'inventory_item_id' => $item->id,
-                'ref_code'          => $item->ref_code,
-                'lot_number'        => $item->lot_number,
-                'quantity'          => abs($delta),
-                'movement_type'     => $movementType,
-                'from_location'     => $delta < 0 ? $item->location?->value : null,
-                'to_location'       => $delta > 0 ? $item->location?->value : null,
-                'reference_type'    => $reference ? $reference::class : null,
-                'reference_id'      => $reference?->id,
-                'performed_by'      => $userId,
-                'notes'             => $reason,
-            ]);
+            foreach ($units as $unit) {
+                $unit->update(['status' => DeviceUnitStatus::Missing->value]);
 
-            if ($delta < 0) {
-                $this->maybeAlertLowStock($item);
+                $this->log([
+                    'device_unit_id'   => $unit->id,
+                    'ref_code'         => $item->catalogue_number ?? (string) $item->id,
+                    'lot_number'       => $unit->lot_number,
+                    'quantity'         => 1,
+                    'movement_type'    => 'count_correction',
+                    'from_location'    => $location->name,
+                    'from_location_id' => $location->id,
+                    'reference_type'   => $reference ? $reference::class : null,
+                    'reference_id'     => $reference?->id,
+                    'performed_by'     => $userId,
+                    'notes'            => $reason,
+                ]);
             }
 
-            return $movement;
+            $this->maybeAlertLowStock($item, $location);
+
+            return $units->count();
+        });
+    }
+
+    /** Archive a single unit (damaged / used / removed) with a ledger entry. */
+    public function archiveUnit(DeviceUnit $unit, string $reason, ?int $userId = null): void
+    {
+        DB::transaction(function () use ($unit, $reason, $userId) {
+            $unit->loadMissing(['stockItem', 'location']);
+            $unit->update(['status' => DeviceUnitStatus::Archived->value]);
+
+            $this->log([
+                'device_unit_id'   => $unit->id,
+                'ref_code'         => $unit->stockItem?->catalogue_number ?? (string) $unit->stock_item_id,
+                'lot_number'       => $unit->lot_number,
+                'quantity'         => 1,
+                'movement_type'    => 'adjustment',
+                'from_location'    => $unit->location?->name,
+                'from_location_id' => $unit->location_id,
+                'performed_by'     => $userId,
+                'notes'            => $reason,
+            ]);
+
+            if ($unit->stockItem) {
+                $this->maybeAlertLowStock($unit->stockItem, $unit->location);
+            }
         });
     }
 
@@ -191,21 +128,32 @@ class InventoryService
     }
 
     /**
-     * Real-time low-stock alert (Module 11): if a holding has just dropped to or
-     * below its threshold, notify staff immediately rather than waiting for the
-     * daily batch check.
+     * Real-time low-stock alert. With a $location, checks the stock remaining
+     * at that specific place (e.g. the source a transfer just left); without,
+     * checks the item's global on-hand total (daily sweep / procurement view).
      */
-    protected function maybeAlertLowStock(InventoryItem $item): void
+    public function maybeAlertLowStock(StockItem $item, ?Location $location = null): void
     {
-        $item->refresh();
+        if ($item->min_threshold === null) {
+            return;
+        }
 
-        if ($item->quantity > 0 && $item->is_low_stock) {
-            $this->notifications->inventoryAlert(
+        $query = $item->units()
+            ->whereIn('status', [DeviceUnitStatus::Available->value, DeviceUnitStatus::PendingTransfer->value]);
+
+        if ($location) {
+            $query->where('location_id', $location->id);
+        }
+
+        $onHand = $query->count();
+
+        if ($onHand <= $item->min_threshold) {
+            $where = $location ? " at {$location->name}" : '';
+            $this->notifications->stockAlert(
                 $item,
                 'low_stock',
                 'low_stock',
-                "{$item->ref_code} dropped to {$item->quantity} on hand"
-                    .($item->min_threshold ? " (threshold {$item->min_threshold})" : '').'.',
+                "{$item->name} is low{$where}: {$onHand} unit(s) on hand (threshold {$item->min_threshold}).",
             );
         }
     }

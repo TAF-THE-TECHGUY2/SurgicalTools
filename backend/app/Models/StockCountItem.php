@@ -12,9 +12,9 @@ class StockCountItem extends Model
     use HasFactory;
 
     protected $fillable = [
-        'stock_count_id', 'inventory_item_id', 'ref_code', 'description',
-        'lot_number', 'expected_quantity', 'counted_quantity', 'variance',
-        'photo_path', 'notes',
+        'stock_count_id', 'inventory_item_id', 'stock_item_id', 'ref_code',
+        'description', 'lot_number', 'expected_quantity', 'counted_quantity',
+        'variance', 'photo_path', 'notes',
     ];
 
     protected $appends = ['photo_url'];

@@ -2,10 +2,11 @@
 
 namespace App\Services;
 
-use App\Enums\StockLocation;
+use App\Enums\DeviceUnitStatus;
 use App\Enums\TransferStatus;
 use App\Enums\TransferType;
-use App\Models\InventoryItem;
+use App\Models\DeviceUnit;
+use App\Models\Location;
 use App\Models\Transfer;
 use App\Models\User;
 use App\Support\ReferenceGenerator;
@@ -13,18 +14,17 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 /**
- * Drives the two-transfer workflow described in the spec.
+ * Unified transfer workflow (spec v2):
  *
- * Transfer 1 (source → boot):
- *   draft → pending_approval → approved/awaiting_signature → signed → completed
- *   On completion: stock moves to the rep's boot, transfer note PDF generated,
- *   emails sent to office / stock controller / rep.
+ *   Request: pick FROM location → select individual device units (serial/lot/
+ *   expiry) → pick TO location → digital signature + date → submit.
+ *   Status: pending_approval. Selected units are flagged `pending_transfer`
+ *   (still counted at the source — inventory only changes on approval).
  *
- * Transfer 2 (boot → hospital):
- *   draft → pending_approval → awaiting_signature → signed →
- *   awaiting_admin_review → completed
- *   Hospital stock-controller signs, delivery note PDF generated + emailed,
- *   then admin review posts the movement to hospital inventory + audit trail.
+ *   Approve: units move to the destination, the ledger is written, a
+ *   transfer/delivery-note PDF is generated + emailed, status → completed.
+ *
+ *   Reject: units revert to `available`; requester is notified (with reason).
  */
 class TransferService
 {
@@ -34,237 +34,179 @@ class TransferService
         protected NotificationService $notifications,
     ) {}
 
-    /** Transfer 1: source location → a rep's boot. */
-    public function createSourceToBoot(array $data, User $requester): Transfer
+    /**
+     * Create a transfer request.
+     * $data: from_location_id, to_location_id, unit_ids[], signature_path,
+     *        signer_name, ip_address?, notes?
+     */
+    public function request(array $data, User $requester): Transfer
     {
         return DB::transaction(function () use ($data, $requester) {
-            $this->assertAvailability(
-                $data['items'] ?? [],
-                $data['from_holder_user_id'] ?? null,
-                $data['from_location'] ?? null,
-            );
+            $from = Location::findOrFail($data['from_location_id']);
+            $to = Location::findOrFail($data['to_location_id']);
+
+            if ($from->id === $to->id) {
+                throw ValidationException::withMessages([
+                    'to_location_id' => 'Source and destination must be different locations.',
+                ]);
+            }
+
+            // Lock and validate the selected units: they must all be available
+            // at the source. A unit already in a pending transfer cannot be
+            // requested twice.
+            $unitIds = array_values(array_unique($data['unit_ids']));
+            $units = DeviceUnit::with('stockItem')
+                ->whereIn('id', $unitIds)
+                ->lockForUpdate()
+                ->get();
+
+            if ($units->count() !== count($unitIds)) {
+                throw ValidationException::withMessages(['unit_ids' => 'One or more selected devices no longer exist.']);
+            }
+
+            foreach ($units as $unit) {
+                if ($unit->location_id !== $from->id) {
+                    throw ValidationException::withMessages([
+                        'unit_ids' => "Device {$unit->serial_number} is not located at {$from->name}.",
+                    ]);
+                }
+                if ($unit->status !== DeviceUnitStatus::Available) {
+                    throw ValidationException::withMessages([
+                        'unit_ids' => 'Device '.($unit->serial_number ?? $unit->stockItem?->name)
+                            ." is not available (status: {$unit->status->value}).",
+                    ]);
+                }
+            }
 
             $transfer = Transfer::create([
-                'reference'           => ReferenceGenerator::next(Transfer::class, 'reference', 'TR1'),
-                'type'                => TransferType::SourceToBoot->value,
-                'status'              => TransferStatus::Draft->value,
-                'from_location'       => $data['from_location'] ?? null,
-                'from_holder_user_id' => $data['from_holder_user_id'] ?? null,
-                'to_location'         => StockLocation::BootStock->value,
-                'to_holder_user_id'   => $data['to_holder_user_id'], // the rep receiving into boot
-                'requested_by'        => $requester->id,
-                'notes'               => $data['notes'] ?? null,
+                'reference'        => ReferenceGenerator::next(Transfer::class, 'reference', 'TR'),
+                'type'             => TransferType::Standard->value,
+                'status'           => TransferStatus::PendingApproval->value,
+                'from_location_id' => $from->id,
+                'to_location_id'   => $to->id,
+                'hospital_id'      => $to->hospital_id, // convenience link for hospital deliveries
+                'requested_by'     => $requester->id,
+                'notes'            => $data['notes'] ?? null,
             ]);
 
-            $this->syncItems($transfer, $data['items'] ?? []);
+            foreach ($units as $unit) {
+                $transfer->items()->create([
+                    'device_unit_id' => $unit->id,
+                    'ref_code'       => $unit->stockItem?->catalogue_number ?? (string) $unit->stock_item_id,
+                    'description'    => $unit->stockItem?->name,
+                    'serial_number'  => $unit->serial_number,
+                    'lot_number'     => $unit->lot_number,
+                    'expiry_date'    => $unit->expiry_date,
+                    'quantity'       => 1,
+                    'unit_price'     => $unit->stockItem?->unit_price,
+                ]);
 
-            return $transfer->fresh('items');
+                // Reserve: still at the source (inventory unchanged) but cannot
+                // be double-requested.
+                $unit->update(['status' => DeviceUnitStatus::PendingTransfer->value]);
+            }
+
+            // Signature is mandatory at request time (spec step 7).
+            $transfer->signatures()->create([
+                'signer_name'       => $data['signer_name'],
+                'signer_role'       => 'requester',
+                'signed_by_user_id' => $requester->id,
+                'signature_path'    => $data['signature_path'],
+                'ip_address'        => $data['ip_address'] ?? null,
+                'signed_at'         => now(),
+            ]);
+
+            $this->notifications->transferAwaitingApproval($transfer);
+
+            return $transfer->fresh(['items', 'fromLocation', 'toLocation', 'signatures']);
         });
     }
 
-    /** Transfer 2: a rep's boot → a hospital. */
-    public function createBootToHospital(array $data, User $requester): Transfer
-    {
-        return DB::transaction(function () use ($data, $requester) {
-            // Source is the rep's boot — verify they actually hold enough stock.
-            $this->assertAvailability(
-                $data['items'] ?? [],
-                $data['from_holder_user_id'] ?? $requester->id,
-                StockLocation::BootStock->value,
-            );
-
-            $transfer = Transfer::create([
-                'reference'           => ReferenceGenerator::next(Transfer::class, 'reference', 'TR2'),
-                'type'                => TransferType::BootToHospital->value,
-                'status'              => TransferStatus::Draft->value,
-                'from_location'       => StockLocation::BootStock->value,
-                'from_holder_user_id' => $data['from_holder_user_id'] ?? $requester->id,
-                'to_location'         => StockLocation::HospitalStock->value,
-                'hospital_id'         => $data['hospital_id'],
-                'doctor_id'           => $data['doctor_id'] ?? null,
-                'hospital_stock_type' => $data['hospital_stock_type'],
-                'requested_by'        => $requester->id,
-                'notes'               => $data['notes'] ?? null,
-            ]);
-
-            $this->syncItems($transfer, $data['items'] ?? []);
-
-            return $transfer->fresh('items');
-        });
-    }
-
-    /** Move a draft into the approval queue and notify approvers. */
-    public function submit(Transfer $transfer): Transfer
-    {
-        $this->assertStatus($transfer, [TransferStatus::Draft]);
-
-        $transfer->update(['status' => TransferStatus::PendingApproval->value]);
-        $this->notifications->transferAwaitingApproval($transfer);
-
-        return $transfer;
-    }
-
-    /** Approve (source owner for T1, assigned rep/admin for T2). */
+    /** Approve: move the units, write the ledger, PDF + email, complete. */
     public function approve(Transfer $transfer, User $approver, bool $override = false): Transfer
     {
         $this->assertStatus($transfer, [TransferStatus::PendingApproval]);
 
-        $transfer->update([
-            'status'         => TransferStatus::AwaitingSignature->value,
-            'approved_by'    => $approver->id,
-            'approved_at'    => now(),
-            'admin_override' => $override,
-        ]);
+        return DB::transaction(function () use ($transfer, $approver, $override) {
+            $transfer->loadMissing(['items.deviceUnit.stockItem', 'fromLocation', 'toLocation']);
 
-        $this->notifications->transferApproved($transfer);
+            foreach ($transfer->items as $line) {
+                $unit = $line->deviceUnit;
+                if (! $unit) {
+                    continue;
+                }
 
-        return $transfer;
-    }
+                $unit->update([
+                    'location_id' => $transfer->to_location_id,
+                    'status'      => DeviceUnitStatus::Available->value,
+                ]);
 
-    public function reject(Transfer $transfer, User $user, ?string $reason = null): Transfer
-    {
-        $this->assertStatus($transfer, [
-            TransferStatus::PendingApproval,
-            TransferStatus::AwaitingAdminReview,
-        ]);
-
-        $transfer->update([
-            'status'           => TransferStatus::Rejected->value,
-            'rejected_by'      => $user->id,
-            'rejected_at'      => now(),
-            'rejection_reason' => $reason,
-        ]);
-
-        $this->notifications->transferRejected($transfer);
-
-        return $transfer;
-    }
-
-    /**
-     * Capture a digital signature. Advances the workflow:
-     *  - Transfer 1: signed → apply movement to boot → generate transfer note
-     *    → email → completed.
-     *  - Transfer 2: signed → generate delivery note → email → awaiting admin
-     *    review.
-     */
-    public function sign(Transfer $transfer, array $signature, User $user): Transfer
-    {
-        $this->assertStatus($transfer, [TransferStatus::AwaitingSignature]);
-
-        $transfer->signatures()->create([
-            'signer_name'       => $signature['signer_name'],
-            'signer_role'       => $signature['signer_role'] ?? null,
-            'signed_by_user_id' => $user->id,
-            'signature_path'    => $signature['signature_path'],
-            'ip_address'        => $signature['ip_address'] ?? null,
-            'signed_at'         => now(),
-        ]);
-
-        $transfer->update(['status' => TransferStatus::Signed->value]);
-
-        if ($transfer->type === TransferType::SourceToBoot) {
-            return $this->complete($transfer, $user); // no admin review for Transfer 1
-        }
-
-        // Transfer 2 — generate delivery note, email it, then await admin review.
-        $pdf = $this->pdf->generateDeliveryNote($transfer);
-        $this->notifications->transferCompleted($transfer, $pdf); // emails delivery note
-        $transfer->update(['status' => TransferStatus::AwaitingAdminReview->value]);
-        $this->notifications->transferAwaitingAdminReview($transfer); // nudge admins to review
-
-        return $transfer->fresh();
-    }
-
-    /** Admin final review for Transfer 2: posts the movement + completes. */
-    public function adminReview(Transfer $transfer, User $admin): Transfer
-    {
-        $this->assertStatus($transfer, [TransferStatus::AwaitingAdminReview]);
-
-        $transfer->update(['reviewed_by' => $admin->id, 'reviewed_at' => now()]);
-
-        return $this->complete($transfer, $admin);
-    }
-
-    /** Post stock movement, generate the document, email it, mark complete. */
-    protected function complete(Transfer $transfer, User $user): Transfer
-    {
-        return DB::transaction(function () use ($transfer, $user) {
-            $this->inventory->applyTransfer($transfer);
-
-            $transfer->update([
-                'status'       => TransferStatus::Completed->value,
-                'completed_at' => now(),
-            ]);
-
-            // Transfer 1 generates its note at completion; Transfer 2's delivery
-            // note was already produced at signature time.
-            if ($transfer->type === TransferType::SourceToBoot) {
-                $pdf = $this->pdf->generateTransferNote($transfer);
-                $this->notifications->transferCompleted($transfer, $pdf);
+                $this->inventory->log([
+                    'device_unit_id'   => $unit->id,
+                    'ref_code'         => $line->ref_code,
+                    'lot_number'       => $line->lot_number,
+                    'quantity'         => 1,
+                    'movement_type'    => 'transfer',
+                    'from_location'    => $transfer->fromLocation?->name,
+                    'to_location'      => $transfer->toLocation?->name,
+                    'from_location_id' => $transfer->from_location_id,
+                    'to_location_id'   => $transfer->to_location_id,
+                    'to_hospital_id'   => $transfer->toLocation?->hospital_id,
+                    'reference_type'   => Transfer::class,
+                    'reference_id'     => $transfer->id,
+                    'performed_by'     => $approver->id,
+                    'notes'            => "Transfer {$transfer->reference}"
+                        .($unit->serial_number ? " · SN {$unit->serial_number}" : ''),
+                ]);
             }
 
-            return $transfer->fresh(['items', 'documents', 'signatures']);
+            $transfer->update([
+                'status'         => TransferStatus::Completed->value,
+                'approved_by'    => $approver->id,
+                'approved_at'    => now(),
+                'admin_override' => $override,
+                'completed_at'   => now(),
+            ]);
+
+            // Low-stock check on the items that just left the source location.
+            foreach ($transfer->items->pluck('deviceUnit.stockItem')->filter()->unique('id') as $stockItem) {
+                $this->inventory->maybeAlertLowStock($stockItem, $transfer->fromLocation);
+            }
+
+            // Delivery note when the destination is a hospital; transfer note otherwise.
+            $pdf = $transfer->toLocation?->type === 'hospital'
+                ? $this->pdf->generateDeliveryNote($transfer)
+                : $this->pdf->generateTransferNote($transfer);
+
+            $this->notifications->transferCompleted($transfer, $pdf);
+
+            return $transfer->fresh(['items', 'documents', 'signatures', 'fromLocation', 'toLocation']);
         });
     }
 
-    /* -------------------------------------------------------------------- */
-    /*  Internals                                                           */
-    /* -------------------------------------------------------------------- */
-
-    protected function syncItems(Transfer $transfer, array $items): void
+    /** Reject: release the reserved units back to the source. */
+    public function reject(Transfer $transfer, User $user, ?string $reason = null): Transfer
     {
-        foreach ($items as $row) {
-            $source = ! empty($row['inventory_item_id'])
-                ? InventoryItem::find($row['inventory_item_id'])
-                : null;
+        $this->assertStatus($transfer, [TransferStatus::PendingApproval]);
 
-            $transfer->items()->create([
-                'inventory_item_id' => $source?->id,
-                'ref_code'          => $row['ref_code'] ?? $source?->ref_code,
-                'description'       => $row['description'] ?? $source?->description,
-                'lot_number'        => $row['lot_number'] ?? $source?->lot_number,
-                'quantity'          => $row['quantity'],
-                'expiry_date'       => $row['expiry_date'] ?? $source?->expiry_date,
-                'unit_price'        => $row['unit_price'] ?? $source?->unit_price,
+        return DB::transaction(function () use ($transfer, $user, $reason) {
+            $transfer->loadMissing('items.deviceUnit');
+
+            foreach ($transfer->items as $line) {
+                $line->deviceUnit?->update(['status' => DeviceUnitStatus::Available->value]);
+            }
+
+            $transfer->update([
+                'status'           => TransferStatus::Rejected->value,
+                'rejected_by'      => $user->id,
+                'rejected_at'      => now(),
+                'rejection_reason' => $reason,
             ]);
-        }
-    }
 
-    /**
-     * Reject a transfer at creation time if the source doesn't currently hold
-     * enough stock — so requesters find out immediately, not at completion.
-     */
-    protected function assertAvailability(array $items, ?int $fromHolderId, ?string $fromLocation): void
-    {
-        foreach ($items as $row) {
-            $needed = (int) ($row['quantity'] ?? 0);
-            if ($needed <= 0) {
-                continue;
-            }
+            $this->notifications->transferRejected($transfer);
 
-            if (! empty($row['inventory_item_id'])) {
-                $available = (int) (InventoryItem::whereKey($row['inventory_item_id'])->value('quantity') ?? 0);
-                $label = $row['ref_code'] ?? ('item #'.$row['inventory_item_id']);
-            } else {
-                $query = InventoryItem::query()->where('ref_code', $row['ref_code'] ?? '');
-                if (! empty($row['lot_number'])) {
-                    $query->where('lot_number', $row['lot_number']);
-                }
-                if ($fromHolderId) {
-                    $query->where('holder_user_id', $fromHolderId);
-                } elseif ($fromLocation) {
-                    $query->where('location', $fromLocation);
-                }
-                $available = (int) $query->sum('quantity');
-                $label = $row['ref_code'] ?? 'item';
-            }
-
-            if ($available < $needed) {
-                throw ValidationException::withMessages([
-                    'items' => "Only {$available} unit(s) of {$label} available at the source; you requested {$needed}.",
-                ]);
-            }
-        }
+            return $transfer->fresh();
+        });
     }
 
     protected function assertStatus(Transfer $transfer, array $allowed): void

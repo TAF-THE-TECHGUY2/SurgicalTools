@@ -16,6 +16,8 @@ class UserResource extends JsonResource
             'phone'       => $this->phone,
             'region'      => $this->region,
             'staff_type'  => $this->staff_type,
+            'location_id' => $this->location_id,
+            'location'    => new LocationResource($this->whenLoaded('location')),
             'is_active'   => $this->is_active,
             'roles'       => $this->whenLoaded('roles', fn () => $this->roles->pluck('name')),
             'permissions' => $this->when(

@@ -1,10 +1,11 @@
-import { Routes, Route } from 'react-router-dom'
+import { Routes, Route, Navigate } from 'react-router-dom'
 import { ProtectedRoute } from '@/auth/ProtectedRoute'
 import { AppLayout } from '@/components/layout/AppLayout'
 import LoginPage from '@/pages/LoginPage'
 import DashboardPage from '@/pages/DashboardPage'
-import InventoryListPage from '@/pages/inventory/InventoryListPage'
-import InventoryDetailPage from '@/pages/inventory/InventoryDetailPage'
+import MyInventoryPage from '@/pages/inventory/MyInventoryPage'
+import StockItemsPage from '@/pages/stock-items/StockItemsPage'
+import LocationsPage from '@/pages/locations/LocationsPage'
 import TransferListPage from '@/pages/transfers/TransferListPage'
 import TransferCreatePage from '@/pages/transfers/TransferCreatePage'
 import TransferDetailPage from '@/pages/transfers/TransferDetailPage'
@@ -31,8 +32,11 @@ export default function App() {
       <Route element={<ProtectedRoute />}>
         <Route element={<AppLayout />}>
           <Route path="/" element={<DashboardPage />} />
-          <Route path="/inventory" element={<InventoryListPage />} />
-          <Route path="/inventory/:id" element={<InventoryDetailPage />} />
+          <Route path="/inventory" element={<MyInventoryPage />} />
+          {/* Legacy deep links → the item finder */}
+          <Route path="/inventory/:id" element={<Navigate to="/inventory" replace />} />
+          <Route path="/stock-items" element={<StockItemsPage />} />
+          <Route path="/locations" element={<LocationsPage />} />
           <Route path="/transfers" element={<TransferListPage />} />
           <Route path="/transfers/new" element={<TransferCreatePage />} />
           <Route path="/transfers/:id" element={<TransferDetailPage />} />

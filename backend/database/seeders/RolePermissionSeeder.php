@@ -22,6 +22,7 @@ class RolePermissionSeeder extends Seeder
         // Master data
         'hospital.view', 'hospital.manage',
         'doctor.view', 'doctor.manage',
+        'location.manage',
         // Ops
         'report.view', 'pastel.export',
         // Administration

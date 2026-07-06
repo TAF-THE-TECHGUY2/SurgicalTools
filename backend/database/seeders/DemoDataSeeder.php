@@ -2,18 +2,23 @@
 
 namespace Database\Seeders;
 
-use App\Enums\StockLocation;
-use App\Enums\StockStatus;
-use App\Enums\StockType;
 use App\Enums\UserRole;
 use App\Models\Doctor;
 use App\Models\Hospital;
-use App\Models\InventoryItem;
+use App\Models\Location;
 use App\Models\PreferenceCard;
+use App\Models\StockItem;
 use App\Models\User;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\Hash;
 
+/**
+ * Seeds the demo world from the functional spec:
+ *   Locations: Zamokuhle Hospital · Mike Boot · Josh Boot · JHB Office · Netcare Montana
+ *   Users: super, admin, Mike (Mike Boot), Josh (Josh Boot)
+ *   Stock: Trochar / Guide Wire / Mesh device units with serials, lots, expiries.
+ * Idempotent — safe to re-run.
+ */
 class DemoDataSeeder extends Seeder
 {
     public function run(): void
@@ -22,129 +27,140 @@ class DemoDataSeeder extends Seeder
         $super = $this->user('Sarah Naidoo', 'super@surgical.test', UserRole::SuperAdmin, 'office');
         $admin = $this->user('David Botha', 'admin@surgical.test', UserRole::Admin, 'office');
         $mike  = $this->user('Mike Dlamini', 'mike@surgical.test', UserRole::GeneralUser, 'rep');
-        $lerato = $this->user('Lerato Khumalo', 'lerato@surgical.test', UserRole::GeneralUser, 'rep');
-        $runner = $this->user('Peter Smith', 'runner@surgical.test', UserRole::GeneralUser, 'runner');
+        $josh  = $this->user('Josh van Wyk', 'josh@surgical.test', UserRole::GeneralUser, 'rep');
 
-        // -- Hospitals -------------------------------------------------------
-        $arwyp = Hospital::create([
-            'name' => 'Arwyp Medical Centre', 'code' => 'ARWYP', 'category' => 'private',
-            'region' => 'Gauteng', 'city' => 'Kempton Park', 'province' => 'Gauteng',
-            'address' => '20 Central Ave, Kempton Park', 'phone' => '011 922 1000',
-            'assigned_rep_id' => $mike->id, 'assigned_runner_id' => $runner->id,
-        ]);
-        $milpark = Hospital::create([
-            'name' => 'Netcare Milpark Hospital', 'code' => 'MILPARK', 'category' => 'netcare',
-            'region' => 'Gauteng', 'city' => 'Johannesburg', 'province' => 'Gauteng',
-            'address' => '9 Guild Rd, Parktown West', 'phone' => '011 480 5600',
-            'assigned_rep_id' => $lerato->id,
-        ]);
-        $stAugustine = Hospital::create([
-            'name' => 'Life St Augustine\'s Hospital', 'code' => 'STAUG', 'category' => 'life',
-            'region' => 'KZN', 'city' => 'Durban', 'province' => 'KwaZulu-Natal',
-            'address' => '107 JB Marks Rd, Glenwood', 'phone' => '031 268 5000',
-            'assigned_rep_id' => $lerato->id,
-        ]);
+        // -- Hospitals (master data behind the hospital locations) -----------
+        $zamokuhle = Hospital::firstOrCreate(
+            ['name' => 'Zamokuhle Hospital'],
+            ['code' => 'ZAMO', 'category' => 'private', 'region' => 'Gauteng',
+                'city' => 'Tembisa', 'province' => 'Gauteng',
+                'address' => 'Hospital Rd, Tembisa', 'assigned_rep_id' => $mike->id],
+        );
+        $montana = Hospital::firstOrCreate(
+            ['name' => 'Netcare Montana'],
+            ['code' => 'MONT', 'category' => 'netcare', 'region' => 'Gauteng',
+                'city' => 'Pretoria', 'province' => 'Gauteng',
+                'address' => 'Dr Swanepoel Rd, Montana Park', 'assigned_rep_id' => $josh->id],
+        );
 
-        // Link reps/runners to login accounts (the assignment that scopes approvals).
-        $arwyp->users()->attach($mike->id, ['role' => 'rep']);
-        $arwyp->users()->attach($runner->id, ['role' => 'runner']);
-        $milpark->users()->attach($lerato->id, ['role' => 'rep']);
-        $stAugustine->users()->attach($lerato->id, ['role' => 'rep']);
+        $zamokuhle->users()->syncWithoutDetaching([$mike->id => ['role' => 'rep']]);
+        $montana->users()->syncWithoutDetaching([$josh->id => ['role' => 'rep']]);
 
-        // Key contacts
-        $arwyp->contacts()->createMany([
-            ['name' => 'Nomsa Zulu', 'role' => 'Stock Controller', 'email' => 'stock@arwyp.test', 'phone' => '011 922 1010', 'is_primary' => true],
-            ['name' => 'Dr Theatre Manager', 'role' => 'Theatre Manager', 'email' => 'theatre@arwyp.test'],
-        ]);
-        $milpark->contacts()->create([
-            'name' => 'James Pillay', 'role' => 'Stock Controller', 'email' => 'stock@milpark.test', 'is_primary' => true,
-        ]);
+        $zamokuhle->contacts()->firstOrCreate(
+            ['name' => 'Nomsa Zulu'],
+            ['role' => 'Stock Controller', 'email' => 'stock@zamokuhle.test', 'is_primary' => true],
+        );
+        $montana->contacts()->firstOrCreate(
+            ['name' => 'James Pillay'],
+            ['role' => 'Stock Controller', 'email' => 'stock@montana.test', 'is_primary' => true],
+        );
 
-        // -- Doctors ---------------------------------------------------------
-        $drJones = Doctor::create([
-            'name' => 'Dr A. Jones', 'age' => 52, 'specialty' => 'general_surgeon',
-            'operating_days' => ['monday', 'wednesday', 'friday'],
-            'equipment_used' => ['Laparoscopic Stapler', 'Trocar 12mm'],
-            'procedure_preferences' => 'Prefers 12mm trocars, blue cartridges for bowel.',
-            'phone' => '082 111 2222', 'email' => 'a.jones@doctors.test',
-        ]);
-        $drPatel = Doctor::create([
-            'name' => 'Dr S. Patel', 'age' => 45, 'specialty' => 'gynaecologist',
-            'operating_days' => ['tuesday', 'thursday'],
-            'equipment_used' => ['Hysteroscope', 'Bipolar Forceps'],
-            'phone' => '083 333 4444', 'email' => 's.patel@doctors.test',
-        ]);
-
-        $drJones->hospitals()->attach([$arwyp->id, $milpark->id]);
-        $drPatel->hospitals()->attach([$stAugustine->id, $milpark->id]);
-
-        // -- Preference card -------------------------------------------------
-        $card = PreferenceCard::create([
-            'doctor_id' => $drJones->id,
-            'procedure_name' => 'Laparoscopic Cholecystectomy',
-            'notes' => 'Patient positioned reverse Trendelenburg. Confirm CO2 supply.',
-            'preferred_sizes' => ['trocar' => '12mm', 'stapler' => '60mm'],
-        ]);
-        $card->items()->createMany([
-            ['ref_code' => 'STP-60', 'description' => 'Endo Stapler 60mm', 'preferred_size' => '60mm', 'quantity' => 1],
-            ['ref_code' => 'TRO-12', 'description' => 'Trocar 12mm', 'preferred_size' => '12mm', 'quantity' => 2],
-            ['ref_code' => 'CLP-ML', 'description' => 'Polymer Clips Medium/Large', 'quantity' => 1],
-        ]);
-
-        // -- Inventory -------------------------------------------------------
-        $catalog = [
-            ['STP-60', 'Endo Stapler 60mm', 4500.00],
-            ['TRO-12', 'Trocar 12mm', 850.00],
-            ['CLP-ML', 'Polymer Clips Medium/Large', 1200.00],
-            ['MESH-15', 'Hernia Mesh 15x15cm', 3200.00],
-            ['SUT-30', 'Absorbable Suture 3-0', 95.00],
-            ['HYS-SC', 'Hysteroscope Sheath', 7800.00],
+        // -- The five transfer entities (locations) ---------------------------
+        $locations = [
+            'Zamokuhle Hospital' => Location::firstOrCreate(
+                ['name' => 'Zamokuhle Hospital'],
+                ['type' => 'hospital', 'hospital_id' => $zamokuhle->id],
+            ),
+            'Mike Boot' => Location::firstOrCreate(
+                ['name' => 'Mike Boot'],
+                ['type' => 'boot', 'owner_user_id' => $mike->id],
+            ),
+            'Josh Boot' => Location::firstOrCreate(
+                ['name' => 'Josh Boot'],
+                ['type' => 'boot', 'owner_user_id' => $josh->id],
+            ),
+            'JHB Office' => Location::firstOrCreate(
+                ['name' => 'JHB Office'],
+                ['type' => 'office'],
+            ),
+            'Netcare Montana' => Location::firstOrCreate(
+                ['name' => 'Netcare Montana'],
+                ['type' => 'hospital', 'hospital_id' => $montana->id],
+            ),
         ];
 
-        foreach ($catalog as $i => [$ref, $desc, $price]) {
-            // Warehouse master stock
-            InventoryItem::create([
-                'ref_code' => $ref, 'description' => $desc,
-                'lot_number' => 'LOT-'.(1000 + $i),
-                'quantity' => 40 + $i * 5,
-                'expiry_date' => now()->addMonths(8 + $i),
-                'stock_type' => StockType::Warehouse->value,
-                'location' => StockLocation::JhbMasterWarehouse->value,
-                'status' => StockStatus::Available->value,
-                'min_threshold' => 10, 'unit_price' => $price, 'uom' => 'each',
+        // Link each user's login to their "My Inventory" location.
+        $mike->update(['location_id' => $locations['Mike Boot']->id]);
+        $josh->update(['location_id' => $locations['Josh Boot']->id]);
+        $admin->update(['location_id' => $locations['JHB Office']->id]);
+        $super->update(['location_id' => $locations['JHB Office']->id]);
+
+        // -- Stock catalog -----------------------------------------------------
+        $trochar = StockItem::firstOrCreate(
+            ['catalogue_number' => 'TRO-12'],
+            ['name' => 'Trochar', 'item_code' => 'TR', 'uom' => 'each', 'unit_price' => 850, 'min_threshold' => 5],
+        );
+        $guideWire = StockItem::firstOrCreate(
+            ['catalogue_number' => 'GW-035'],
+            ['name' => 'Guide Wire', 'item_code' => 'GW', 'uom' => 'each', 'unit_price' => 320, 'min_threshold' => 5],
+        );
+        $mesh = StockItem::firstOrCreate(
+            ['catalogue_number' => 'MESH-15'],
+            ['name' => 'Mesh', 'item_code' => 'ME', 'uom' => 'each', 'unit_price' => 3200, 'min_threshold' => 4],
+        );
+
+        // -- Device units (serial / lot / expiry per the spec example) --------
+        // Josh Boot — the spec's worked example.
+        $this->unit($trochar, $locations['Josh Boot'], 'TR001', 'LOT123', '2027-12-01');
+        $this->unit($trochar, $locations['Josh Boot'], 'TR002', 'LOT124', '2028-02-01');
+        $this->unit($trochar, $locations['Josh Boot'], 'TR003', 'LOT130', '2027-07-01');
+        foreach (range(1, 4) as $i) {
+            $this->unit($guideWire, $locations['Josh Boot'], sprintf('GWJ%03d', $i), 'LOT210', '2028-05-01');
+        }
+
+        // Mike Boot.
+        $this->unit($trochar, $locations['Mike Boot'], 'TR010', 'LOT131', '2027-09-01');
+        $this->unit($trochar, $locations['Mike Boot'], 'TR011', 'LOT131', '2027-09-01');
+        foreach (range(1, 3) as $i) {
+            $this->unit($mesh, $locations['Mike Boot'], sprintf('MEM%03d', $i), 'LOT501', '2028-01-01');
+        }
+
+        // JHB Office — main store.
+        foreach (range(20, 29) as $i) {
+            $this->unit($trochar, $locations['JHB Office'], "TR0{$i}", 'LOT140', '2028-06-01');
+        }
+        foreach (range(1, 5) as $i) {
+            $this->unit($guideWire, $locations['JHB Office'], sprintf('GWO%03d', $i), 'LOT211', '2028-08-01');
+        }
+        foreach (range(1, 12) as $i) {
+            $this->unit($mesh, $locations['JHB Office'], sprintf('MEO%03d', $i), 'LOT502', '2028-03-01');
+        }
+
+        // A couple of near-expiry units to exercise the alerts.
+        $this->unit($guideWire, $locations['JHB Office'], 'GWEXP1', 'LOT-EXP', now()->addDays(25)->toDateString());
+        $this->unit($guideWire, $locations['JHB Office'], 'GWEXP2', 'LOT-EXP', now()->addDays(25)->toDateString());
+
+        // Hospital consignment examples.
+        $this->unit($mesh, $locations['Zamokuhle Hospital'], 'MEZ001', 'LOT503', '2028-04-01');
+        $this->unit($mesh, $locations['Netcare Montana'], 'MEN001', 'LOT503', '2028-04-01');
+
+        // -- Doctors + preference card (unchanged modules) ---------------------
+        $drJones = Doctor::firstOrCreate(
+            ['name' => 'Dr A. Jones'],
+            ['age' => 52, 'specialty' => 'general_surgeon',
+                'operating_days' => ['monday', 'wednesday', 'friday'],
+                'equipment_used' => ['Trochar 12mm', 'Mesh 15x15'],
+                'procedure_preferences' => 'Prefers 12mm trochars.'],
+        );
+        $drJones->hospitals()->syncWithoutDetaching([$zamokuhle->id, $montana->id]);
+
+        $card = PreferenceCard::firstOrCreate(
+            ['doctor_id' => $drJones->id, 'procedure_name' => 'Laparoscopic Hernia Repair'],
+            ['notes' => 'Reverse Trendelenburg. Confirm CO2 supply.'],
+        );
+        if ($card->items()->count() === 0) {
+            $card->items()->createMany([
+                ['ref_code' => 'TRO-12', 'description' => 'Trochar', 'preferred_size' => '12mm', 'quantity' => 2],
+                ['ref_code' => 'MESH-15', 'description' => 'Mesh', 'preferred_size' => '15x15cm', 'quantity' => 1],
             ]);
         }
 
-        // Some stock already in Mike's boot
-        InventoryItem::create([
-            'ref_code' => 'TRO-12', 'description' => 'Trocar 12mm', 'lot_number' => 'LOT-1001',
-            'quantity' => 6, 'expiry_date' => now()->addMonths(9),
-            'stock_type' => StockType::Boot->value, 'location' => StockLocation::BootStock->value,
-            'status' => StockStatus::Available->value, 'holder_user_id' => $mike->id,
-            'unit_price' => 850.00, 'uom' => 'each',
-        ]);
-
-        // Near-expiry + low-stock examples to trigger alerts
-        InventoryItem::create([
-            'ref_code' => 'SUT-30', 'description' => 'Absorbable Suture 3-0', 'lot_number' => 'LOT-EXP',
-            'quantity' => 3, 'expiry_date' => now()->addDays(25),
-            'stock_type' => StockType::Warehouse->value, 'location' => StockLocation::JhbMasterWarehouse->value,
-            'status' => StockStatus::Available->value, 'min_threshold' => 10, 'unit_price' => 95.00,
-        ]);
-        InventoryItem::create([
-            'ref_code' => 'CLP-ML', 'description' => 'Polymer Clips Medium/Large', 'lot_number' => 'LOT-CON',
-            'quantity' => 8, 'expiry_date' => now()->addMonths(14),
-            'stock_type' => StockType::Consignment->value, 'location' => StockLocation::HospitalStock->value,
-            'status' => StockStatus::Available->value, 'hospital_id' => $arwyp->id, 'unit_price' => 1200.00,
-        ]);
-
-        $this->command?->info('Demo data seeded. Logins (password: "password"):');
-        $this->command?->table(['Role', 'Email'], [
-            ['Super Admin', 'super@surgical.test'],
-            ['Admin', 'admin@surgical.test'],
-            ['General (rep, Arwyp)', 'mike@surgical.test'],
-            ['General (rep, Milpark/St Aug)', 'lerato@surgical.test'],
-            ['General (runner, Arwyp)', 'runner@surgical.test'],
+        $this->command?->info('Demo world seeded. Logins (password: "password"):');
+        $this->command?->table(['Role', 'Email', 'My Inventory'], [
+            ['Super Admin', 'super@surgical.test', 'JHB Office (sees all)'],
+            ['Admin', 'admin@surgical.test', 'JHB Office'],
+            ['General (rep)', 'mike@surgical.test', 'Mike Boot'],
+            ['General (rep)', 'josh@surgical.test', 'Josh Boot'],
         ]);
     }
 
@@ -152,15 +168,18 @@ class DemoDataSeeder extends Seeder
     {
         $user = User::firstOrCreate(
             ['email' => $email],
-            [
-                'name' => $name,
-                'password' => Hash::make('password'),
-                'staff_type' => $staffType,
-                'is_active' => true,
-            ],
+            ['name' => $name, 'password' => Hash::make('password'), 'staff_type' => $staffType, 'is_active' => true],
         );
         $user->syncRoles([$role->value]);
 
         return $user;
+    }
+
+    protected function unit(StockItem $item, Location $location, string $serial, string $lot, string $expiry): void
+    {
+        $item->units()->firstOrCreate(
+            ['serial_number' => $serial],
+            ['lot_number' => $lot, 'expiry_date' => $expiry, 'location_id' => $location->id, 'status' => 'available'],
+        );
     }
 }

@@ -16,7 +16,7 @@ class StockCount extends Model
     use HasFactory, LogsActivity, SoftDeletes;
 
     protected $fillable = [
-        'reference', 'status', 'location', 'hospital_id', 'holder_user_id',
+        'reference', 'status', 'location', 'location_id', 'hospital_id', 'holder_user_id',
         'requested_by', 'assigned_to', 'reviewed_by', 'submitted_at',
         'reviewed_at', 'notes',
     ];
@@ -41,6 +41,12 @@ class StockCount extends Model
     public function hospital(): BelongsTo
     {
         return $this->belongsTo(Hospital::class);
+    }
+
+    /** The location entity being counted (named to avoid clashing with the legacy `location` string column). */
+    public function locationEntity(): BelongsTo
+    {
+        return $this->belongsTo(Location::class, 'location_id');
     }
 
     public function requester(): BelongsTo

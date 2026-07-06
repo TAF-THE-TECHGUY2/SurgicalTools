@@ -14,14 +14,11 @@ use Illuminate\Support\Facades\Log;
 /**
  * Offline synchronisation endpoint. The PWA queues operations locally
  * (IndexedDB) while offline and replays them here on reconnect. Each operation
- * carries a client-generated `client_id` for idempotency: replaying a synced
- * operation returns the existing server record instead of duplicating it.
+ * carries a client-generated `client_id` for idempotency.
  *
  * Supported operations:
- *   - transfer.source_to_boot   (create Transfer 1)
- *   - transfer.boot_to_hospital (create Transfer 2)
- *   - transfer.sign             (capture a signature)
- *   - stock_count.submit        (submit counted quantities)
+ *   - transfer.request   (create a unit-level transfer request, incl. signature)
+ *   - stock_count.submit (submit counted quantities)
  */
 class SyncController extends Controller
 {
@@ -62,67 +59,38 @@ class SyncController extends Controller
 
     protected function apply(array $op, $user): array
     {
-        // Idempotency — if we've already processed this client_id, return it.
-        if ($existing = $this->findProcessed($op)) {
-            return ['client_id' => $op['client_id'], 'status' => 'duplicate', 'server_id' => $existing->id];
+        if (str_starts_with($op['type'], 'transfer.')) {
+            $existing = Transfer::where('meta->client_id', $op['client_id'])->first();
+            if ($existing) {
+                return ['client_id' => $op['client_id'], 'status' => 'duplicate', 'server_id' => $existing->id];
+            }
         }
 
         $payload = $op['payload'];
-        $payload['_client_id'] = $op['client_id'];
 
         $serverId = match ($op['type']) {
-            'transfer.source_to_boot' => $this->createTransfer1($payload, $user),
-            'transfer.boot_to_hospital' => $this->createTransfer2($payload, $user),
-            'transfer.sign'          => $this->signTransfer($payload, $user),
-            'stock_count.submit'     => $this->submitCount($payload, $user),
+            'transfer.request'   => $this->createTransfer($payload, $op['client_id'], $user),
+            'stock_count.submit' => $this->submitCount($payload, $user),
             default => throw new \InvalidArgumentException("Unknown sync type: {$op['type']}"),
         };
 
         return ['client_id' => $op['client_id'], 'status' => 'applied', 'server_id' => $serverId];
     }
 
-    protected function findProcessed(array $op): ?Transfer
+    protected function createTransfer(array $payload, string $clientId, $user): int
     {
-        if (str_starts_with($op['type'], 'transfer.')) {
-            return Transfer::where('meta->client_id', $op['client_id'])->first();
-        }
+        $path = SignatureStorage::storeBase64($payload['signature'], 'sync-'.$clientId);
 
-        return null;
-    }
-
-    protected function createTransfer1(array $payload, $user): int
-    {
-        $transfer = $this->transfers->createSourceToBoot($payload, $user);
-        $transfer->update(['meta' => ['client_id' => $payload['_client_id']]]);
-        if ($payload['submit'] ?? true) {
-            $this->transfers->submit($transfer);
-        }
-
-        return $transfer->id;
-    }
-
-    protected function createTransfer2(array $payload, $user): int
-    {
-        $transfer = $this->transfers->createBootToHospital($payload, $user);
-        $transfer->update(['meta' => ['client_id' => $payload['_client_id']]]);
-        if ($payload['submit'] ?? true) {
-            $this->transfers->submit($transfer);
-        }
-
-        return $transfer->id;
-    }
-
-    protected function signTransfer(array $payload, $user): int
-    {
-        $transfer = Transfer::findOrFail($payload['transfer_id']);
-        $path = SignatureStorage::storeBase64($payload['signature'], $transfer->id);
-
-        $this->transfers->sign($transfer, [
-            'signer_name'    => $payload['signer_name'],
-            'signer_role'    => $payload['signer_role'] ?? 'hospital_controller',
-            'signature_path' => $path,
-            'ip_address'     => request()->ip(),
+        $transfer = $this->transfers->request([
+            'from_location_id' => $payload['from_location_id'],
+            'to_location_id'   => $payload['to_location_id'],
+            'unit_ids'         => $payload['unit_ids'],
+            'signature_path'   => $path,
+            'signer_name'      => $payload['signer_name'] ?? $user->name,
+            'notes'            => $payload['notes'] ?? null,
         ], $user);
+
+        $transfer->update(['meta' => ['client_id' => $clientId]]);
 
         return $transfer->id;
     }

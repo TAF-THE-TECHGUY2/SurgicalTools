@@ -22,6 +22,14 @@ class MetaController extends Controller
     public function __invoke(): JsonResponse
     {
         return response()->json([
+            'device_unit_statuses'  => \App\Enums\DeviceUnitStatus::options(),
+            'location_types'        => [
+                ['value' => 'hospital', 'label' => 'Hospital'],
+                ['value' => 'boot', 'label' => 'Rep Boot'],
+                ['value' => 'office', 'label' => 'Office'],
+                ['value' => 'warehouse', 'label' => 'Warehouse'],
+                ['value' => 'other', 'label' => 'Other'],
+            ],
             'stock_types'           => StockType::options(),
             'hospital_stock_types'  => array_values(array_filter(
                 StockType::options(),

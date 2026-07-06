@@ -2,7 +2,6 @@
 
 namespace App\Policies;
 
-use App\Enums\TransferType;
 use App\Models\Transfer;
 use App\Models\User;
 
@@ -23,25 +22,12 @@ class TransferPolicy
         return $user->can('transfer.create');
     }
 
-    public function update(User $user, Transfer $transfer): bool
-    {
-        // Only the requester may edit a draft; admins may edit anything.
-        if ($user->isAdmin()) {
-            return true;
-        }
-
-        return $user->can('transfer.create')
-            && $transfer->requested_by === $user->id
-            && $transfer->status->value === 'draft';
-    }
-
     /**
-     * The core business rule:
-     *  - Admins / Super Admins may approve ANY transfer.
-     *  - General users may approve Transfer 2 (boot→hospital) only for a
-     *    hospital they are assigned to (rep/runner).
-     *  - General users may approve Transfer 1 (source→boot) only when they are
-     *    the source owner whose stock is being moved.
+     * Approval authority:
+     *  - Admins / Super Admins approve anything.
+     *  - A user with the transfer.approve permission may approve when the
+     *    stock is leaving THEIR linked location (their boot/office), or when
+     *    the transfer touches a hospital they are assigned to as rep/runner.
      */
     public function approve(User $user, Transfer $transfer): bool
     {
@@ -50,44 +36,34 @@ class TransferPolicy
         }
 
         if ($user->isAdmin()) {
-            return true; // transfer.approve_any
+            return true;
         }
 
-        return match ($transfer->type) {
-            TransferType::BootToHospital =>
-                in_array($transfer->hospital_id, $user->assignedHospitalIds(), true),
-            TransferType::SourceToBoot =>
-                $transfer->from_holder_user_id === $user->id,
-        };
+        if ($user->location_id && $transfer->from_location_id === $user->location_id) {
+            return true;
+        }
+
+        $hospitalIds = $user->assignedHospitalIds();
+        $transfer->loadMissing(['fromLocation', 'toLocation']);
+
+        foreach ([$transfer->fromLocation, $transfer->toLocation] as $location) {
+            if ($location?->hospital_id && in_array($location->hospital_id, $hospitalIds, true)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
-    /** Same gate as approve — rejection mirrors approval authority. */
+    /** Rejection mirrors approval authority. */
     public function reject(User $user, Transfer $transfer): bool
     {
         return $this->approve($user, $transfer);
     }
 
-    /** Admin override of a hospital approval (Transfer 2). */
+    /** Admin override of an approval. */
     public function override(User $user, Transfer $transfer): bool
     {
         return $user->can('transfer.override') && $user->isAdmin();
-    }
-
-    /** Final admin review that posts the movement to inventory. */
-    public function review(User $user, Transfer $transfer): bool
-    {
-        return $user->can('transfer.review') && $user->isAdmin();
-    }
-
-    /** Capturing the hospital stock-controller signature. */
-    public function sign(User $user, Transfer $transfer): bool
-    {
-        if ($user->isAdmin()) {
-            return true;
-        }
-
-        // The assigned rep/runner facilitates the on-site signature.
-        return $user->can('transfer.create')
-            && in_array($transfer->hospital_id, $user->assignedHospitalIds(), true);
     }
 }

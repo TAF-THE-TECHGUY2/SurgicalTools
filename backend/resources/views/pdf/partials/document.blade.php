@@ -1,6 +1,8 @@
 @php
     /** @var \App\Models\Transfer $transfer */
-    $isDelivery = $transfer->type->value === 'boot_to_hospital';
+    $isDelivery = $transfer->toLocation?->type === 'hospital';
+    $fromName = $transfer->fromLocation?->name ?? \Illuminate\Support\Str::headline($transfer->from_location ?? 'Source');
+    $toName = $transfer->toLocation?->name ?? \Illuminate\Support\Str::headline($transfer->to_location ?? 'Destination');
 @endphp
 <!DOCTYPE html>
 <html lang="en">
@@ -38,7 +40,7 @@
             <td style="text-align:right">
                 <div class="doc-title">{{ $isDelivery ? 'Delivery Note' : 'Transfer Note' }}</div>
                 <div class="muted">{{ $transfer->reference }}</div>
-                <div class="pill">{{ $transfer->type->label() }}</div>
+                <div class="pill">{{ $fromName }} → {{ $toName }}</div>
             </td>
         </tr></table>
     </div>
@@ -46,28 +48,21 @@
     <table class="meta-table">
         <tr>
             <td style="width:50%">
-                <div class="label">{{ $isDelivery ? 'Deliver To (Hospital)' : 'Receiving Rep (Boot)' }}</div>
+                <div class="label">{{ $isDelivery ? 'Deliver To' : 'To' }}</div>
                 <div>
-                    @if($isDelivery)
-                        {{ $transfer->hospital?->name ?? '—' }}<br>
-                        <span class="muted">{{ $transfer->hospital?->address }}</span>
-                    @else
-                        {{ $transfer->toHolder?->name ?? '—' }}<br>
-                        <span class="muted">Boot Stock</span>
+                    {{ $toName }}<br>
+                    @if($transfer->toLocation?->hospital)
+                        <span class="muted">{{ $transfer->toLocation->hospital->address }}</span>
                     @endif
                 </div>
             </td>
             <td style="width:50%">
                 <div class="label">From</div>
-                <div>
-                    {{ $transfer->fromHolder?->name ?? \Illuminate\Support\Str::headline($transfer->from_location ?? 'Source') }}
-                </div>
+                <div>{{ $fromName }}</div>
+                <div class="label" style="margin-top:8px">Requested by</div>
+                <div>{{ $transfer->requester?->name ?? '—' }}</div>
                 <div class="label" style="margin-top:8px">Date</div>
                 <div>{{ optional($transfer->completed_at ?? $transfer->created_at)->format('d M Y, H:i') }}</div>
-                @if($isDelivery)
-                    <div class="label" style="margin-top:8px">Stock Type</div>
-                    <div>{{ \Illuminate\Support\Str::headline($transfer->hospital_stock_type ?? '') }}</div>
-                @endif
             </td>
         </tr>
     </table>
@@ -75,8 +70,9 @@
     <table class="items">
         <thead>
             <tr>
-                <th>Ref Code</th>
+                <th>Cat No.</th>
                 <th>Description</th>
+                <th>Serial No.</th>
                 <th>Lot No.</th>
                 <th>Expiry</th>
                 <th style="text-align:right">Qty</th>
@@ -87,6 +83,7 @@
                 <tr>
                     <td>{{ $item->ref_code }}</td>
                     <td>{{ $item->description }}</td>
+                    <td>{{ $item->serial_number ?? '—' }}</td>
                     <td>{{ $item->lot_number ?? '—' }}</td>
                     <td>{{ optional($item->expiry_date)->format('d M Y') ?? '—' }}</td>
                     <td style="text-align:right">{{ $item->quantity }}</td>
@@ -103,7 +100,7 @@
     <table class="sign-box" style="width:100%"><tr>
         <td style="width:50%; vertical-align:bottom">
             @php
-                $sig = $transfer->signatures->last();
+                $sig = $transfer->signatures->first();
                 $sigData = null;
                 if ($sig && \Illuminate\Support\Facades\Storage::disk(config('filesystems.default'))->exists($sig->signature_path)) {
                     $bytes = \Illuminate\Support\Facades\Storage::disk(config('filesystems.default'))->get($sig->signature_path);
@@ -118,11 +115,13 @@
                     <span class="muted">Signed {{ $sig->signed_at->format('d M Y H:i') }}</span>
                 </div>
             @else
-                <div class="sign-line">{{ $isDelivery ? 'Hospital Stock Controller' : 'Receiving Rep' }}</div>
+                <div class="sign-line">Requested by</div>
             @endif
         </td>
         <td style="width:50%; vertical-align:bottom">
-            <div class="sign-line">Authorised by {{ $transfer->approver?->name ?? 'Surgical Devices' }}</div>
+            <div class="sign-line">Approved by {{ $transfer->approver?->name ?? 'Surgical Devices' }}
+                @if($transfer->approved_at)<br><span class="muted">{{ $transfer->approved_at->format('d M Y H:i') }}</span>@endif
+            </div>
         </td>
     </tr></table>
 

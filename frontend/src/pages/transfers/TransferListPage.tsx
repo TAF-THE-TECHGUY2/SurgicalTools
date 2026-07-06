@@ -2,7 +2,6 @@ import { useQuery } from '@tanstack/react-query'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Plus } from 'lucide-react'
 import { api, apiError } from '@/lib/api'
-import { useMeta } from '@/hooks/useMeta'
 import { Can } from '@/auth/Can'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { Card, CardBody } from '@/components/ui/Card'
@@ -12,15 +11,19 @@ import { StatusBadge } from '@/components/ui/Badge'
 import { DataTable } from '@/components/ui/Table'
 import type { Column } from '@/components/ui/Table'
 import { LoadingState, ErrorState } from '@/components/ui/States'
-import { formatDate } from '@/lib/format'
+import { formatDate, humanize } from '@/lib/format'
 import type { Paginated, Transfer } from '@/types'
+
+const STATUS_OPTIONS = [
+  { value: 'pending_approval', label: 'Pending approval' },
+  { value: 'completed', label: 'Completed' },
+  { value: 'rejected', label: 'Rejected' },
+]
 
 export default function TransferListPage() {
   const navigate = useNavigate()
-  const { data: meta } = useMeta()
   const [searchParams, setSearchParams] = useSearchParams()
 
-  const type = searchParams.get('type') ?? ''
   const status = searchParams.get('status') ?? ''
   const page = Number(searchParams.get('page') ?? '1')
 
@@ -35,12 +38,11 @@ export default function TransferListPage() {
   }
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ['transfers', { type, status, page }],
+    queryKey: ['transfers', { status, page }],
     queryFn: async () =>
       (
         await api.get<Paginated<Transfer>>('/transfers', {
           params: {
-            type: type || undefined,
             status: status || undefined,
             page,
           },
@@ -50,9 +52,10 @@ export default function TransferListPage() {
 
   const columns: Column<Transfer>[] = [
     { key: 'reference', header: 'Reference', render: (r) => <span className="font-medium text-slate-800">{r.reference}</span> },
-    { key: 'type', header: 'Type', render: (r) => r.type_label ?? r.type },
-    { key: 'hospital', header: 'Hospital', render: (r) => r.hospital?.name ?? 'Boot' },
-    { key: 'items', header: 'Items', render: (r) => r.items?.length ?? 0 },
+    { key: 'from', header: 'From', render: (r) => r.from_location_entity?.name ?? humanize(r.from_location) },
+    { key: 'to', header: 'To', render: (r) => r.to_location_entity?.name ?? humanize(r.to_location) },
+    { key: 'devices', header: 'Devices', render: (r) => r.items?.length ?? 0 },
+    { key: 'requester', header: 'Requested by', render: (r) => r.requester?.name ?? '—' },
     { key: 'status', header: 'Status', render: (r) => <StatusBadge status={r.status} /> },
     { key: 'created', header: 'Created', render: (r) => formatDate(r.created_at) },
   ]
@@ -64,7 +67,7 @@ export default function TransferListPage() {
     <>
       <PageHeader
         title="Transfers"
-        description="Source-to-boot and boot-to-hospital stock movements."
+        description="Device movements between locations — signed at request, stock moves on approval."
         actions={
           <Can permission="transfer.create">
             <Button onClick={() => navigate('/transfers/new')}>
@@ -76,20 +79,10 @@ export default function TransferListPage() {
 
       <Card className="mb-4">
         <CardBody className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <Field label="Type">
-            <Select value={type} onChange={(e) => setParam('type', e.target.value)}>
-              <option value="">All types</option>
-              {meta?.transfer_types.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </Select>
-          </Field>
           <Field label="Status">
             <Select value={status} onChange={(e) => setParam('status', e.target.value)}>
               <option value="">All statuses</option>
-              {meta?.transfer_statuses.map((o) => (
+              {STATUS_OPTIONS.map((o) => (
                 <option key={o.value} value={o.value}>
                   {o.label}
                 </option>

@@ -16,7 +16,7 @@ import type { Column } from '@/components/ui/Table'
 import { LoadingState, ErrorState } from '@/components/ui/States'
 import { Modal } from '@/components/ui/Modal'
 import { formatDate, humanize } from '@/lib/format'
-import type { Paginated, StockCount, User } from '@/types'
+import type { LocationEntity, Paginated, StockCount, User } from '@/types'
 
 export default function StockCountListPage() {
   const navigate = useNavigate()
@@ -151,18 +151,22 @@ export default function StockCountListPage() {
 }
 
 interface CreateForm {
-  location: string
+  location_id: string
   assigned_to: string
   notes: string
 }
 
-const emptyForm: CreateForm = { location: '', assigned_to: '', notes: '' }
+const emptyForm: CreateForm = { location_id: '', assigned_to: '', notes: '' }
 
 function CreateCountModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const toast = useToast()
   const qc = useQueryClient()
-  const { data: meta } = useMeta()
   const [form, setForm] = useState<CreateForm>(emptyForm)
+
+  const { data: locations } = useQuery({
+    queryKey: ['locations'],
+    queryFn: async () => (await api.get<{ data: LocationEntity[] }>('/locations')).data.data,
+  })
 
   const { data: users } = useQuery({
     queryKey: ['users', 'for-stock-count'],
@@ -181,9 +185,9 @@ function CreateCountModal({ open, onClose }: { open: boolean; onClose: () => voi
   const mutation = useMutation({
     mutationFn: async () => {
       const payload: Record<string, unknown> = {
-        location: form.location,
-        assigned_to: form.assigned_to === '' ? null : Number(form.assigned_to),
-        notes: form.notes || null,
+        location_id: Number(form.location_id),
+        ...(form.assigned_to !== '' ? { assigned_to: Number(form.assigned_to) } : {}),
+        ...(form.notes ? { notes: form.notes } : {}),
       }
       return (await api.post('/stock-counts', payload)).data
     },
@@ -206,11 +210,12 @@ function CreateCountModal({ open, onClose }: { open: boolean; onClose: () => voi
         }}
       >
         <Field label="Location" required>
-          <Select value={form.location} onChange={set('location')} required>
+          <Select value={form.location_id} onChange={set('location_id')} required>
             <option value="">Select…</option>
-            {meta?.locations.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
+            {(locations ?? []).map((l) => (
+              <option key={l.id} value={String(l.id)}>
+                {l.name}
+                {l.owner ? ` — ${l.owner.name}` : ''}
               </option>
             ))}
           </Select>

@@ -34,10 +34,10 @@ export default function DashboardPage() {
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <Stat icon={Boxes} tone="teal" label="Stock lines" value={data.inventory.total_items} sub={`${data.inventory.total_units} units`} to="/inventory" />
-        <Stat icon={AlertTriangle} tone="amber" label="Low stock" value={data.inventory.low_stock} sub="below threshold" to="/inventory?low_stock=1" />
+        <Stat icon={AlertTriangle} tone="amber" label="Low stock" value={data.inventory.low_stock} sub="below threshold" to="/inventory" />
         <Stat icon={Clock} tone="red" label="Expiring soon" value={data.inventory.expiring_soon} sub={`${data.inventory.expiring_critical} critical`} to="/reports" />
-        <Stat icon={ArrowLeftRight} tone="blue" label="Open transfers" value={data.transfers.open} sub={`${data.transfers.pending_approval} pending`} to="/transfers" />
-        <Stat icon={CheckSquare} tone="purple" label="Awaiting review" value={data.transfers.awaiting_admin_review} sub="admin review" to="/approvals" />
+        <Stat icon={ArrowLeftRight} tone="blue" label="Pending transfers" value={data.transfers.pending_approval} sub="awaiting approval" to="/approvals" />
+        <Stat icon={CheckSquare} tone="purple" label="Counts to review" value={data.stock_counts.submitted} sub="submitted" to="/approvals" />
         <Stat icon={ClipboardCheck} tone="teal" label="Open counts" value={data.stock_counts.open} sub={`${data.stock_counts.submitted} submitted`} to="/stock-counts" />
         <Stat icon={TrendingUp} tone="green" label="Completed (mo)" value={data.transfers.completed_this_month} sub="transfers" to="/transfers?status=completed" />
         <Stat icon={Building2} tone="blue" label="Hospitals" value={data.hospitals.assigned} sub={`of ${data.hospitals.total}`} to="/hospitals" />

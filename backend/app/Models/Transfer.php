@@ -19,6 +19,7 @@ class Transfer extends Model
 
     protected $fillable = [
         'reference', 'type', 'status', 'from_location', 'to_location',
+        'from_location_id', 'to_location_id',
         'from_holder_user_id', 'to_holder_user_id', 'hospital_id', 'doctor_id',
         'hospital_stock_type', 'requested_by', 'approved_by', 'approved_at',
         'admin_override', 'reviewed_by', 'reviewed_at', 'rejected_by',
@@ -56,6 +57,16 @@ class Transfer extends Model
     public function signatures(): HasMany
     {
         return $this->hasMany(TransferSignature::class);
+    }
+
+    public function fromLocation(): BelongsTo
+    {
+        return $this->belongsTo(Location::class, 'from_location_id');
+    }
+
+    public function toLocation(): BelongsTo
+    {
+        return $this->belongsTo(Location::class, 'to_location_id');
     }
 
     public function hospital(): BelongsTo

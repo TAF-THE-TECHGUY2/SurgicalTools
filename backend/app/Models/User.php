@@ -24,6 +24,7 @@ class User extends Authenticatable
         'phone',
         'region',
         'staff_type',
+        'location_id',
         'is_active',
     ];
 
@@ -52,6 +53,12 @@ class User extends Authenticatable
     /* -------------------------------------------------------------------- */
     /*  Relationships                                                       */
     /* -------------------------------------------------------------------- */
+
+    /** The location (boot / office) whose stock is this user's "My Inventory". */
+    public function location(): \Illuminate\Database\Eloquent\Relations\BelongsTo
+    {
+        return $this->belongsTo(Location::class);
+    }
 
     /** Hospitals this user is assigned to as a rep / runner. */
     public function hospitals(): BelongsToMany

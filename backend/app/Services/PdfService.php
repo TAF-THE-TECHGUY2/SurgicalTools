@@ -37,7 +37,7 @@ class PdfService
 
     protected function render(Transfer $transfer, string $view, string $type, string $filename): Document
     {
-        $transfer->loadMissing(['items', 'hospital', 'requester', 'approver', 'signatures', 'fromHolder', 'toHolder']);
+        $transfer->loadMissing(['items', 'fromLocation', 'toLocation.hospital', 'requester', 'approver', 'signatures']);
 
         $pdf = Pdf::loadView($view, ['transfer' => $transfer])->setPaper('a4');
 

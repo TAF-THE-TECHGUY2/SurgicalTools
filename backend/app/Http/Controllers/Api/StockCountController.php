@@ -47,11 +47,9 @@ class StockCountController extends Controller
         $this->authorize('create', StockCount::class);
 
         $data = $request->validate([
-            'location'       => ['nullable', 'string'],
-            'hospital_id'    => ['nullable', 'exists:hospitals,id'],
-            'holder_user_id' => ['nullable', 'exists:users,id'],
-            'assigned_to'    => ['nullable', 'exists:users,id'],
-            'notes'          => ['nullable', 'string', 'max:1000'],
+            'location_id' => ['required', 'exists:locations,id'],
+            'assigned_to' => ['nullable', 'exists:users,id'],
+            'notes'       => ['nullable', 'string', 'max:1000'],
         ]);
 
         $count = $this->service->create($data, $request->user());

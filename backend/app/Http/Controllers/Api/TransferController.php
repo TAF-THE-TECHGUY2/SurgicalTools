@@ -3,8 +3,6 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Http\Requests\StoreBootToHospitalRequest;
-use App\Http\Requests\StoreSourceToBootRequest;
 use App\Http\Resources\TransferResource;
 use App\Models\Transfer;
 use App\Services\TransferService;
@@ -23,19 +21,21 @@ class TransferController extends Controller
         $user = $request->user();
 
         $query = Transfer::query()
-            ->with(['hospital', 'requester', 'approver', 'items'])
-            ->when($request->filled('type'), fn ($q) => $q->where('type', $request->type))
+            ->with(['fromLocation', 'toLocation', 'requester', 'items'])
             ->when($request->filled('status'), fn ($q) => $q->where('status', $request->status))
-            ->when($request->filled('hospital_id'), fn ($q) => $q->where('hospital_id', $request->hospital_id))
+            ->when($request->filled('location_id'), fn ($q) => $q->where(fn ($s) => $s
+                ->where('from_location_id', $request->location_id)
+                ->orWhere('to_location_id', $request->location_id)))
             ->latest();
 
-        // Non-admins only see transfers relevant to them.
+        // Non-admins see transfers relevant to them: their own requests, or
+        // moves touching their linked location / assigned hospitals.
         if (! $user->isAdmin()) {
             $hospitalIds = $user->assignedHospitalIds();
             $query->where(function ($q) use ($user, $hospitalIds) {
                 $q->where('requested_by', $user->id)
-                    ->orWhere('to_holder_user_id', $user->id)
-                    ->orWhere('from_holder_user_id', $user->id)
+                    ->orWhere('from_location_id', $user->location_id)
+                    ->orWhere('to_location_id', $user->location_id)
                     ->orWhereIn('hospital_id', $hospitalIds);
             });
         }
@@ -48,44 +48,44 @@ class TransferController extends Controller
         $this->authorize('view', $transfer);
 
         return new TransferResource($transfer->load([
-            'hospital', 'doctor', 'requester', 'approver', 'reviewer',
-            'fromHolder', 'toHolder', 'items', 'signatures', 'documents',
+            'fromLocation.owner:id,name', 'toLocation.hospital', 'requester', 'approver',
+            'items', 'signatures', 'documents',
         ]));
     }
 
-    /** Create Transfer 1 (source → boot). */
-    public function storeSourceToBoot(StoreSourceToBootRequest $request)
+    /**
+     * Create a transfer request (spec steps 1–8): from → units → to →
+     * signature → pending approval.
+     */
+    public function store(Request $request)
     {
-        $transfer = $this->service->createSourceToBoot($request->validated(), $request->user());
+        $data = $request->validate([
+            'from_location_id' => ['required', 'exists:locations,id'],
+            'to_location_id'   => ['required', 'exists:locations,id', 'different:from_location_id'],
+            'unit_ids'         => ['required', 'array', 'min:1'],
+            'unit_ids.*'       => ['integer', 'exists:device_units,id'],
+            'signature'        => ['required', 'string'], // base64 PNG from the pad
+            'notes'            => ['nullable', 'string', 'max:2000'],
+        ]);
 
-        if ($request->boolean('submit')) {
-            $this->service->submit($transfer);
-        }
+        abort_unless($request->user()->can('transfer.create'), 403);
 
-        return (new TransferResource($transfer->fresh(['items'])))
-            ->response()->setStatusCode(201);
+        $path = SignatureStorage::storeBase64($data['signature'], 'request-'.now()->format('YmdHis'));
+
+        $transfer = $this->service->request([
+            'from_location_id' => $data['from_location_id'],
+            'to_location_id'   => $data['to_location_id'],
+            'unit_ids'         => $data['unit_ids'],
+            'signature_path'   => $path,
+            'signer_name'      => $request->user()->name,
+            'ip_address'       => $request->ip(),
+            'notes'            => $data['notes'] ?? null,
+        ], $request->user());
+
+        return (new TransferResource($transfer))->response()->setStatusCode(201);
     }
 
-    /** Create Transfer 2 (boot → hospital). */
-    public function storeBootToHospital(StoreBootToHospitalRequest $request)
-    {
-        $transfer = $this->service->createBootToHospital($request->validated(), $request->user());
-
-        if ($request->boolean('submit')) {
-            $this->service->submit($transfer);
-        }
-
-        return (new TransferResource($transfer->fresh(['items', 'hospital'])))
-            ->response()->setStatusCode(201);
-    }
-
-    public function submit(Transfer $transfer)
-    {
-        $this->authorize('update', $transfer);
-
-        return new TransferResource($this->service->submit($transfer));
-    }
-
+    /** Approve — moves the devices and completes the transfer. */
     public function approve(Request $request, Transfer $transfer)
     {
         $this->authorize('approve', $transfer);
@@ -107,37 +107,6 @@ class TransferController extends Controller
         return new TransferResource(
             $this->service->reject($transfer, $request->user(), $data['reason'] ?? null)
         );
-    }
-
-    /** Capture the digital signature (base64 PNG from a signature pad). */
-    public function sign(Request $request, Transfer $transfer)
-    {
-        $this->authorize('sign', $transfer);
-
-        $data = $request->validate([
-            'signer_name'   => ['required', 'string', 'max:255'],
-            'signer_role'   => ['nullable', 'string', 'max:100'],
-            'signature'     => ['required', 'string'], // data:image/png;base64,....
-        ]);
-
-        $path = SignatureStorage::storeBase64($data['signature'], $transfer->id);
-
-        $transfer = $this->service->sign($transfer, [
-            'signer_name'    => $data['signer_name'],
-            'signer_role'    => $data['signer_role'] ?? 'hospital_controller',
-            'signature_path' => $path,
-            'ip_address'     => $request->ip(),
-        ], $request->user());
-
-        return new TransferResource($transfer->load(['items', 'signatures', 'documents']));
-    }
-
-    /** Admin final review (Transfer 2) — posts movement and completes. */
-    public function review(Request $request, Transfer $transfer)
-    {
-        $this->authorize('review', $transfer);
-
-        return new TransferResource($this->service->adminReview($transfer, $request->user()));
     }
 
     /** Stream the generated transfer/delivery-note PDF. */

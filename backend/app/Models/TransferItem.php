@@ -11,8 +11,9 @@ class TransferItem extends Model
     use HasFactory;
 
     protected $fillable = [
-        'transfer_id', 'inventory_item_id', 'ref_code', 'description',
-        'lot_number', 'quantity', 'expiry_date', 'unit_price',
+        'transfer_id', 'inventory_item_id', 'device_unit_id', 'ref_code',
+        'description', 'serial_number', 'lot_number', 'quantity',
+        'expiry_date', 'unit_price',
     ];
 
     protected $casts = [
@@ -28,5 +29,10 @@ class TransferItem extends Model
     public function inventoryItem(): BelongsTo
     {
         return $this->belongsTo(InventoryItem::class);
+    }
+
+    public function deviceUnit(): BelongsTo
+    {
+        return $this->belongsTo(DeviceUnit::class);
     }
 }

@@ -3,19 +3,19 @@
 namespace Tests\Feature;
 
 use App\Enums\UserRole;
-use App\Models\Hospital;
-use App\Models\InventoryItem;
+use App\Models\DeviceUnit;
+use App\Models\Location;
+use App\Models\StockItem;
 use App\Models\StockMovement;
 use App\Models\User;
 use App\Notifications\InventoryAlertNotification;
-use App\Notifications\TransferStatusNotification;
+use App\Services\StockCountService;
 use App\Services\TransferService;
 use Database\Seeders\RolePermissionSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Storage;
-use Illuminate\Validation\ValidationException;
 use Tests\TestCase;
 
 class InventoryIntegrityTest extends TestCase
@@ -37,95 +37,73 @@ class InventoryIntegrityTest extends TestCase
         return $u;
     }
 
-    /** #1 — editing quantity writes a ledger entry instead of a silent overwrite. */
-    public function test_manual_quantity_edit_records_an_adjustment_movement(): void
+    /** Receiving units writes a receipt movement per device. */
+    public function test_receiving_units_writes_ledger_entries(): void
     {
         $admin = $this->makeUser(UserRole::Admin, 'admin@test.com');
-        $item = InventoryItem::create([
-            'ref_code' => 'ADJ-1', 'description' => 'Item', 'quantity' => 40,
-            'stock_type' => 'warehouse', 'location' => 'jhb_master_warehouse', 'status' => 'available',
-        ]);
+        $office = Location::create(['name' => 'JHB Office', 'type' => 'office']);
+        $item = StockItem::create(['name' => 'Mesh', 'catalogue_number' => 'MESH-15']);
 
-        $this->actingAs($admin, 'sanctum')->putJson("/api/inventory/{$item->id}", [
-            'ref_code' => 'ADJ-1', 'description' => 'Item', 'quantity' => 30,
-            'stock_type' => 'warehouse', 'location' => 'jhb_master_warehouse', 'status' => 'available',
-        ])->assertOk();
+        $this->actingAs($admin, 'sanctum')->postJson("/api/stock-items/{$item->id}/units", [
+            'location_id' => $office->id,
+            'units' => [
+                ['serial_number' => 'ME001', 'lot_number' => 'LOT1', 'expiry_date' => '2028-01-01'],
+                ['serial_number' => 'ME002', 'lot_number' => 'LOT1', 'expiry_date' => '2028-01-01'],
+            ],
+        ])->assertCreated();
 
-        $this->assertSame(30, $item->fresh()->quantity);
-
-        $movement = StockMovement::where('inventory_item_id', $item->id)
-            ->where('movement_type', 'adjustment')->first();
-        $this->assertNotNull($movement, 'an adjustment movement should be logged');
-        $this->assertSame(10, $movement->quantity);
+        $this->assertSame(2, $item->units()->count());
+        $this->assertSame(2, StockMovement::where('movement_type', 'receipt')->count());
     }
 
-    /** #2 — a transfer for more than is available is rejected at creation. */
-    public function test_transfer_creation_rejects_more_than_available(): void
-    {
-        $rep = $this->makeUser(UserRole::GeneralUser, 'rep@test.com');
-        InventoryItem::create([
-            'ref_code' => 'LOW', 'description' => 'Scarce', 'quantity' => 5,
-            'stock_type' => 'warehouse', 'location' => 'jhb_master_warehouse', 'status' => 'available',
-        ]);
-
-        $this->expectException(ValidationException::class);
-
-        app(TransferService::class)->createSourceToBoot([
-            'from_location' => 'jhb_master_warehouse',
-            'to_holder_user_id' => $rep->id,
-            'items' => [['ref_code' => 'LOW', 'quantity' => 10]], // only 5 exist
-        ], $rep);
-    }
-
-    /** #4 — dropping a holding below threshold fires a real-time low-stock alert. */
-    public function test_low_stock_alert_fires_when_movement_drops_below_threshold(): void
+    /** Real-time low-stock alert fires when an approval drops an item to/below threshold. */
+    public function test_low_stock_alert_fires_on_transfer_approval(): void
     {
         Notification::fake();
         $admin = $this->makeUser(UserRole::Admin, 'admin2@test.com');
-        $rep = $this->makeUser(UserRole::GeneralUser, 'rep2@test.com');
+        $josh = $this->makeUser(UserRole::GeneralUser, 'josh2@test.com');
 
-        InventoryItem::create([
-            'ref_code' => 'THR', 'description' => 'Thresholded', 'quantity' => 12, 'min_threshold' => 10,
-            'stock_type' => 'warehouse', 'location' => 'jhb_master_warehouse', 'status' => 'available',
-        ]);
+        $boot = Location::create(['name' => 'Josh Boot', 'type' => 'boot', 'owner_user_id' => $josh->id]);
+        $office = Location::create(['name' => 'Office', 'type' => 'office']);
+        $josh->update(['location_id' => $boot->id]);
+
+        $item = StockItem::create(['name' => 'Guide Wire', 'catalogue_number' => 'GW', 'min_threshold' => 2]);
+        $units = collect(range(1, 3))->map(fn ($i) => $item->units()->create([
+            'serial_number' => "GW00{$i}", 'location_id' => $boot->id, 'status' => 'available',
+        ]));
 
         $svc = app(TransferService::class);
-        $t = $svc->createSourceToBoot([
-            'from_location' => 'jhb_master_warehouse', 'to_holder_user_id' => $rep->id,
-            'items' => [['ref_code' => 'THR', 'quantity' => 5]], // 12 -> 7, below threshold 10
-        ], $rep);
-        $svc->submit($t);
+        $t = $svc->request([
+            'from_location_id' => $boot->id, 'to_location_id' => $office->id,
+            'unit_ids' => [$units[0]->id], 'signature_path' => 's.png', 'signer_name' => 'Josh',
+        ], $josh);
         $svc->approve($t->fresh(), $admin);
-        $svc->sign($t->fresh(), ['signer_name' => 'Rep', 'signature_path' => 's.png'], $rep);
 
+        // 3 - 1 = 2 on hand == threshold → alert.
         Notification::assertSentTo($admin, InventoryAlertNotification::class);
     }
 
-    /** #3 — admins are notified when a Transfer 2 is signed and awaits review. */
-    public function test_admin_notified_when_transfer_awaits_review(): void
+    /** Approving a count with a negative variance writes off the missing units. */
+    public function test_count_approval_marks_missing_units(): void
     {
-        Notification::fake();
         $admin = $this->makeUser(UserRole::Admin, 'admin3@test.com');
-        $rep = $this->makeUser(UserRole::GeneralUser, 'rep3@test.com');
-        $hospital = Hospital::create(['name' => 'H', 'category' => 'private']);
-        $hospital->users()->attach($rep->id, ['role' => 'rep']);
+        $boot = Location::create(['name' => 'Boot', 'type' => 'boot']);
+        $item = StockItem::create(['name' => 'Trochar', 'catalogue_number' => 'TRO']);
+        foreach (range(1, 5) as $i) {
+            $item->units()->create(['serial_number' => "T{$i}", 'location_id' => $boot->id, 'status' => 'available']);
+        }
 
-        InventoryItem::create([
-            'ref_code' => 'B', 'description' => 'B', 'quantity' => 10, 'stock_type' => 'boot',
-            'location' => 'boot_stock', 'status' => 'available', 'holder_user_id' => $rep->id,
-        ]);
+        $svc = app(StockCountService::class);
+        $count = $svc->create(['location_id' => $boot->id], $admin);
 
-        $svc = app(TransferService::class);
-        $t = $svc->createBootToHospital([
-            'hospital_id' => $hospital->id, 'from_holder_user_id' => $rep->id,
-            'hospital_stock_type' => 'consignment',
-            'items' => [['ref_code' => 'B', 'quantity' => 2]],
-        ], $rep);
-        $svc->submit($t);
-        $svc->approve($t->fresh(), $rep);
-        $svc->sign($t->fresh(), ['signer_name' => 'Controller', 'signature_path' => 's.png'], $rep);
+        $line = $count->items()->first();
+        $this->assertSame(5, $line->expected_quantity);
 
-        Notification::assertSentTo($admin, TransferStatusNotification::class,
-            fn ($n) => $n->event === 'awaiting_admin_review');
+        $svc->submit($count, [['id' => $line->id, 'counted_quantity' => 3]]); // 2 missing
+        $svc->review($count->fresh(), $admin, 'approve');
+
+        $this->assertSame(3, DeviceUnit::where('location_id', $boot->id)->where('status', 'available')->count());
+        $this->assertSame(2, DeviceUnit::where('status', 'missing')->count());
+        $this->assertSame(2, StockMovement::where('movement_type', 'count_correction')->count());
     }
 }

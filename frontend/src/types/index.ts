@@ -9,11 +9,86 @@ export interface User {
   phone?: string | null
   region?: string | null
   staff_type?: string | null
+  location_id?: number | null
+  location?: LocationEntity | null
   is_active: boolean
   roles?: Role[]
   permissions?: string[]
   hospitals?: Hospital[]
   created_at?: string
+}
+
+/** A stock "entity": hospital, rep boot, or office — the From/To of transfers. */
+export interface LocationEntity {
+  id: number
+  name: string
+  code?: string | null
+  type: 'hospital' | 'boot' | 'office' | 'warehouse' | 'other'
+  hospital_id?: number | null
+  hospital?: Hospital | null
+  owner?: User | null
+  is_active: boolean
+  units_count?: number
+}
+
+/** Catalog entry (Trochar, Guide Wire…). Physical stock = DeviceUnit rows. */
+export interface StockItem {
+  id: number
+  name: string
+  catalogue_number?: string | null
+  item_code?: string | null
+  description?: string | null
+  uom?: string | null
+  unit_price?: string | number | null
+  min_threshold?: number | null
+  is_active: boolean
+  units_count?: number
+  units?: DeviceUnit[]
+}
+
+export type DeviceUnitStatus =
+  | 'available' | 'pending_transfer' | 'missing' | 'used' | 'expired' | 'archived'
+
+/** One physical device: serial / lot / expiry at a location. */
+export interface DeviceUnit {
+  id: number
+  stock_item_id: number
+  serial_number?: string | null
+  lot_number?: string | null
+  expiry_date?: string | null
+  days_to_expiry?: number | null
+  status: DeviceUnitStatus
+  location_id: number
+  location?: LocationEntity | null
+  stock_item?: StockItem | null
+}
+
+/** Grouped inventory row at a location: an item with its expandable units. */
+export interface GroupedStockRow {
+  stock_item_id: number
+  name: string
+  catalogue_number?: string | null
+  item_code?: string | null
+  quantity: number
+  available: number
+  pending_out: number
+  units: DeviceUnit[]
+}
+
+export interface LocationInventoryResponse {
+  location: LocationEntity | null
+  items: GroupedStockRow[]
+  message?: string
+}
+
+/** Item search across locations: where are all the Trochars? */
+export interface ItemSearchRow {
+  stock_item_id: number
+  name: string
+  catalogue_number?: string | null
+  item_code?: string | null
+  total: number
+  locations: { location_id: number; name: string; type: string; quantity: number }[]
 }
 
 export interface Hospital {
@@ -123,6 +198,8 @@ export type TransferStatus =
 export interface TransferItem {
   id: number
   inventory_item_id?: number | null
+  device_unit_id?: number | null
+  serial_number?: string | null
   ref_code: string
   description?: string | null
   lot_number?: string | null
@@ -154,6 +231,10 @@ export interface Transfer {
   status: TransferStatus
   from_location?: string | null
   to_location?: string | null
+  from_location_id?: number | null
+  to_location_id?: number | null
+  from_location_entity?: LocationEntity | null
+  to_location_entity?: LocationEntity | null
   hospital_stock_type?: string | null
   admin_override: boolean
   notes?: string | null
@@ -227,6 +308,8 @@ export interface Option {
 }
 
 export interface MetaOptions {
+  device_unit_statuses: Option[]
+  location_types: Option[]
   stock_types: Option[]
   hospital_stock_types: Option[]
   locations: Option[]
@@ -267,6 +350,8 @@ export interface DashboardData {
   }
   stock_counts: { open: number; submitted: number }
   hospitals: { total: number; assigned: number }
+  my_inventory_units?: number | null
+  stock_by_location?: { name: string; units: number }[]
   recent_transfers: Transfer[]
   recent_movements: StockMovement[]
 }

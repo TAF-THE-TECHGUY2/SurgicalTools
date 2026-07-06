@@ -12,6 +12,8 @@ class TransferItemResource extends JsonResource
         return [
             'id'                => $this->id,
             'inventory_item_id' => $this->inventory_item_id,
+            'device_unit_id'    => $this->device_unit_id,
+            'serial_number'     => $this->serial_number,
             'ref_code'          => $this->ref_code,
             'description'       => $this->description,
             'lot_number'        => $this->lot_number,

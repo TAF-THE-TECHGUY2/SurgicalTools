@@ -14,7 +14,7 @@ import type { Column } from '@/components/ui/Table'
 import { Modal } from '@/components/ui/Modal'
 import { LoadingState, ErrorState } from '@/components/ui/States'
 import { humanize } from '@/lib/format'
-import type { Hospital, Paginated, User } from '@/types'
+import type { Hospital, LocationEntity, Paginated, User } from '@/types'
 
 interface RoleOption { id: number; name: string }
 
@@ -40,6 +40,7 @@ export default function UsersPage() {
   const [editing, setEditing] = useState<User | null>(null)
   const [editForm, setEditForm] = useState({ ...emptyForm })
   const [assignments, setAssignments] = useState<Record<number, HospitalAssignment>>({})
+  const [editLocationId, setEditLocationId] = useState('')
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['users', q],
@@ -49,6 +50,11 @@ export default function UsersPage() {
   const { data: roles } = useQuery({
     queryKey: ['users', 'roles'],
     queryFn: async () => (await api.get<RoleOption[]>('/users/roles')).data,
+  })
+
+  const { data: locationOptions } = useQuery({
+    queryKey: ['locations'],
+    queryFn: async () => (await api.get<{ data: LocationEntity[] }>('/locations')).data.data,
   })
 
   const { data: hospitals } = useQuery({
@@ -81,6 +87,7 @@ export default function UsersPage() {
       role: u.roles?.[0] ?? '',
       is_active: u.is_active,
     })
+    setEditLocationId(u.location_id ? String(u.location_id) : '')
     const next: Record<number, HospitalAssignment> = {}
     for (const h of u.hospitals ?? []) {
       const role = hospitalRole(h)
@@ -104,6 +111,7 @@ export default function UsersPage() {
         staff_type: editForm.staff_type,
         role: editForm.role,
         is_active: editForm.is_active,
+        location_id: editLocationId ? Number(editLocationId) : null,
       }
       if (editForm.password) payload.password = editForm.password
       await api.put(`/users/${editing.id}`, payload)
@@ -246,6 +254,14 @@ export default function UsersPage() {
               </Select>
             </Field>
           </div>
+          <Field label="Linked location (My Inventory)" hint="The boot/office whose stock this user sees and owns.">
+            <Select value={editLocationId} onChange={(e) => setEditLocationId(e.target.value)}>
+              <option value="">— Not linked —</option>
+              {locationOptions?.map((l) => (
+                <option key={l.id} value={l.id}>{l.name}{l.owner ? ` — ${l.owner.name}` : ''}</option>
+              ))}
+            </Select>
+          </Field>
           <Field label="Reset password" hint="Leave blank to keep the current password.">
             <Input type="password" value={editForm.password} onChange={(e) => setEditForm({ ...editForm, password: e.target.value })} autoComplete="new-password" />
           </Field>

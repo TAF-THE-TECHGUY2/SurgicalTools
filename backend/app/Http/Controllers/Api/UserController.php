@@ -44,6 +44,7 @@ class UserController extends Controller
             'phone'      => ['nullable', 'string', 'max:50'],
             'region'     => ['nullable', 'string', 'max:100'],
             'staff_type' => ['nullable', 'string', 'max:50'],
+            'location_id' => ['nullable', 'exists:locations,id'],
             'role'       => ['required', Rule::exists('roles', 'name')],
             'is_active'  => ['boolean'],
         ]);
@@ -68,6 +69,7 @@ class UserController extends Controller
             'phone'      => ['nullable', 'string', 'max:50'],
             'region'     => ['nullable', 'string', 'max:100'],
             'staff_type' => ['nullable', 'string', 'max:50'],
+            'location_id' => ['nullable', 'exists:locations,id'],
             'is_active'  => ['boolean'],
             'role'       => ['sometimes', Rule::exists('roles', 'name')],
         ]);

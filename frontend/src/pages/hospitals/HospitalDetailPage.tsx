@@ -76,7 +76,7 @@ export default function HospitalDetailPage() {
               </div>
               <p className="mt-1 text-sm text-slate-500">{hospital.region ? humanize(hospital.region) : '—'}</p>
             </div>
-            <Button variant="outline" onClick={() => navigate(`/inventory?hospital_id=${hospital.id}`)}>
+            <Button variant="outline" onClick={() => navigate(`/inventory?hospital=${hospital.id}`)}>
               <Boxes className="h-4 w-4" /> View inventory
             </Button>
           </div>

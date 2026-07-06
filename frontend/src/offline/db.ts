@@ -9,9 +9,7 @@ import type { Table } from 'dexie'
 export interface QueuedOperation {
   client_id: string
   type:
-    | 'transfer.source_to_boot'
-    | 'transfer.boot_to_hospital'
-    | 'transfer.sign'
+    | 'transfer.request'
     | 'stock_count.submit'
   payload: Record<string, unknown>
   status: 'pending' | 'syncing' | 'synced' | 'error'

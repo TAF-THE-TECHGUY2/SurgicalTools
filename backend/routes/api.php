@@ -4,16 +4,19 @@ use App\Http\Controllers\Api\ApprovalCentreController;
 use App\Http\Controllers\Api\AuditLogController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\DashboardController;
+use App\Http\Controllers\Api\DeviceUnitController;
 use App\Http\Controllers\Api\DoctorController;
 use App\Http\Controllers\Api\GlobalSearchController;
 use App\Http\Controllers\Api\HospitalController;
-use App\Http\Controllers\Api\InventoryItemController;
+use App\Http\Controllers\Api\InventoryViewController;
+use App\Http\Controllers\Api\LocationController;
 use App\Http\Controllers\Api\MetaController;
 use App\Http\Controllers\Api\NotificationController;
 use App\Http\Controllers\Api\PastelExportController;
 use App\Http\Controllers\Api\PreferenceCardController;
 use App\Http\Controllers\Api\ReportController;
 use App\Http\Controllers\Api\StockCountController;
+use App\Http\Controllers\Api\StockItemController;
 use App\Http\Controllers\Api\SyncController;
 use App\Http\Controllers\Api\TransferController;
 use App\Http\Controllers\Api\UserController;
@@ -21,14 +24,11 @@ use Illuminate\Support\Facades\Route;
 
 /*
 |--------------------------------------------------------------------------
-| API routes — Surgical Devices ERP
+| API routes — Surgical Devices ERP (unit-level inventory model)
 |--------------------------------------------------------------------------
-| All routes are versioned under /api. Auth is Sanctum bearer-token based.
-| Fine-grained authorization is enforced inside controllers via policies /
-| permission checks (RBAC).
 */
 
-Route::post('auth/login', [AuthController::class, 'login'])->name('auth.login');
+Route::post('auth/login', [AuthController::class, 'login'])->middleware('throttle:10,1')->name('auth.login');
 
 Route::middleware('auth:sanctum')->group(function () {
     // -- Session / identity -------------------------------------------------
@@ -41,22 +41,27 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('search', GlobalSearchController::class)->name('search');
     Route::get('dashboard', DashboardController::class)->name('dashboard');
 
-    // -- Inventory ----------------------------------------------------------
-    Route::get('inventory/{inventoryItem}/movements', [InventoryItemController::class, 'movements'])
-        ->name('inventory.movements');
-    Route::apiResource('inventory', InventoryItemController::class)->parameters(['inventory' => 'inventoryItem']);
+    // -- Locations (the transfer "entities") --------------------------------
+    Route::get('locations/{location}/inventory', [LocationController::class, 'inventory'])->name('locations.inventory');
+    Route::apiResource('locations', LocationController::class);
 
-    // -- Transfers (two-stage workflow) ------------------------------------
+    // -- Inventory views -----------------------------------------------------
+    Route::get('inventory/my', [InventoryViewController::class, 'my'])->name('inventory.my');
+    Route::get('inventory/item-search', [InventoryViewController::class, 'itemSearch'])->name('inventory.itemSearch');
+
+    // -- Stock catalog + device units ----------------------------------------
+    Route::post('stock-items/{stockItem}/units', [StockItemController::class, 'receiveUnits'])->name('stock-items.receive');
+    Route::apiResource('stock-items', StockItemController::class);
+    Route::put('device-units/{deviceUnit}', [DeviceUnitController::class, 'update'])->name('device-units.update');
+    Route::delete('device-units/{deviceUnit}', [DeviceUnitController::class, 'destroy'])->name('device-units.destroy');
+
+    // -- Transfers (unified request → approval flow) ------------------------
     Route::prefix('transfers')->name('transfers.')->group(function () {
         Route::get('/', [TransferController::class, 'index'])->name('index');
-        Route::post('source-to-boot', [TransferController::class, 'storeSourceToBoot'])->name('store.t1');
-        Route::post('boot-to-hospital', [TransferController::class, 'storeBootToHospital'])->name('store.t2');
+        Route::post('/', [TransferController::class, 'store'])->name('store');
         Route::get('{transfer}', [TransferController::class, 'show'])->name('show');
-        Route::post('{transfer}/submit', [TransferController::class, 'submit'])->name('submit');
         Route::post('{transfer}/approve', [TransferController::class, 'approve'])->name('approve');
         Route::post('{transfer}/reject', [TransferController::class, 'reject'])->name('reject');
-        Route::post('{transfer}/sign', [TransferController::class, 'sign'])->name('sign');
-        Route::post('{transfer}/review', [TransferController::class, 'review'])->name('review');
         Route::get('{transfer}/pdf', [TransferController::class, 'downloadPdf'])->name('pdf');
     });
 

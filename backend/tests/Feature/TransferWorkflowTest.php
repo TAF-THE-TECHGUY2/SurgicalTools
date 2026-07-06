@@ -3,26 +3,54 @@
 namespace Tests\Feature;
 
 use App\Enums\UserRole;
-use App\Models\Hospital;
-use App\Models\InventoryItem;
-use App\Models\Transfer;
+use App\Models\DeviceUnit;
+use App\Models\Location;
+use App\Models\StockItem;
 use App\Models\User;
 use App\Services\TransferService;
 use Database\Seeders\RolePermissionSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Validation\ValidationException;
 use Tests\TestCase;
 
 class TransferWorkflowTest extends TestCase
 {
     use RefreshDatabase;
 
+    protected User $admin;
+    protected User $josh;
+    protected User $mike;
+    protected Location $joshBoot;
+    protected Location $mikeBoot;
+    protected Location $office;
+    protected StockItem $trochar;
+
     protected function setUp(): void
     {
         parent::setUp();
         $this->seed(RolePermissionSeeder::class);
         Storage::fake(config('filesystems.default'));
+
+        $this->admin = $this->makeUser(UserRole::Admin, 'admin@test.com');
+        $this->josh = $this->makeUser(UserRole::GeneralUser, 'josh@test.com');
+        $this->mike = $this->makeUser(UserRole::GeneralUser, 'mike@test.com');
+
+        $this->joshBoot = Location::create(['name' => 'Josh Boot', 'type' => 'boot', 'owner_user_id' => $this->josh->id]);
+        $this->mikeBoot = Location::create(['name' => 'Mike Boot', 'type' => 'boot', 'owner_user_id' => $this->mike->id]);
+        $this->office = Location::create(['name' => 'JHB Office', 'type' => 'office']);
+
+        $this->josh->update(['location_id' => $this->joshBoot->id]);
+        $this->mike->update(['location_id' => $this->mikeBoot->id]);
+
+        $this->trochar = StockItem::create(['name' => 'Trochar', 'catalogue_number' => 'TRO-12', 'min_threshold' => 1]);
+        foreach ([['TR001', 'LOT123', '2027-12-01'], ['TR002', 'LOT124', '2028-02-01'], ['TR003', 'LOT130', '2027-07-01']] as [$sn, $lot, $exp]) {
+            $this->trochar->units()->create([
+                'serial_number' => $sn, 'lot_number' => $lot, 'expiry_date' => $exp,
+                'location_id' => $this->joshBoot->id, 'status' => 'available',
+            ]);
+        }
     }
 
     protected function makeUser(UserRole $role, string $email): User
@@ -33,104 +61,82 @@ class TransferWorkflowTest extends TestCase
         return $u;
     }
 
-    public function test_transfer_one_moves_stock_to_boot_and_generates_pdf(): void
+    protected function requestTransfer(User $requester, array $unitIds, ?Location $from = null, ?Location $to = null)
     {
-        $rep = $this->makeUser(UserRole::GeneralUser, 'rep@test.com');
-        $admin = $this->makeUser(UserRole::Admin, 'admin@test.com');
-
-        $warehouse = InventoryItem::create([
-            'ref_code' => 'TRO-12', 'description' => 'Trocar 12mm', 'lot_number' => 'L1',
-            'quantity' => 40, 'stock_type' => 'warehouse', 'location' => 'jhb_master_warehouse',
-            'status' => 'available', 'unit_price' => 850,
-        ]);
-
-        $svc = app(TransferService::class);
-        $transfer = $svc->createSourceToBoot([
-            'from_location' => 'jhb_master_warehouse',
-            'to_holder_user_id' => $rep->id,
-            'items' => [['ref_code' => 'TRO-12', 'quantity' => 5]],
-        ], $rep);
-
-        $svc->submit($transfer);
-        $svc->approve($transfer->fresh(), $admin);
-        $svc->sign($transfer->fresh(), [
-            'signer_name' => 'Rep', 'signer_role' => 'rep',
-            'signature_path' => 'sig.png', 'ip_address' => '127.0.0.1',
-        ], $rep);
-
-        $transfer = $transfer->fresh(['documents']);
-
-        $this->assertSame('completed', $transfer->status->value);
-        $this->assertSame(35, $warehouse->fresh()->quantity, 'warehouse decremented');
-        $this->assertSame(5, (int) InventoryItem::where('ref_code', 'TRO-12')
-            ->where('location', 'boot_stock')->where('holder_user_id', $rep->id)->sum('quantity'),
-            'boot incremented');
-        $this->assertSame(1, $transfer->documents->where('type', 'transfer_pdf')->count(), 'PDF generated');
-        $this->assertGreaterThan(0, $transfer->movements()->count(), 'movement ledger written');
+        return app(TransferService::class)->request([
+            'from_location_id' => ($from ?? $this->joshBoot)->id,
+            'to_location_id'   => ($to ?? $this->mikeBoot)->id,
+            'unit_ids'         => $unitIds,
+            'signature_path'   => 'sig.png',
+            'signer_name'      => $requester->name,
+        ], $requester);
     }
 
-    public function test_general_user_cannot_approve_transfer_for_unassigned_hospital(): void
+    public function test_request_reserves_units_but_inventory_only_moves_on_approval(): void
     {
-        $repA = $this->makeUser(UserRole::GeneralUser, 'a@test.com');
-        $repB = $this->makeUser(UserRole::GeneralUser, 'b@test.com');
-        $admin = $this->makeUser(UserRole::Admin, 'admin2@test.com');
+        $units = $this->trochar->units()->pluck('id')->take(2)->all();
 
-        $hospital = Hospital::create(['name' => 'Arwyp', 'category' => 'private']);
-        $hospital->users()->attach($repA->id, ['role' => 'rep']); // only repA assigned
+        $transfer = $this->requestTransfer($this->mike, $units);
 
-        InventoryItem::create([
-            'ref_code' => 'X', 'description' => 'X', 'quantity' => 10, 'stock_type' => 'boot',
-            'location' => 'boot_stock', 'status' => 'available', 'holder_user_id' => $repA->id,
-        ]);
+        // Pending: units still AT Josh Boot (inventory unchanged) but reserved.
+        $this->assertSame('pending_approval', $transfer->status->value);
+        $this->assertSame(3, DeviceUnit::where('location_id', $this->joshBoot->id)->count(), 'units stay at source while pending');
+        $this->assertSame(2, DeviceUnit::where('status', 'pending_transfer')->count(), 'selected units reserved');
+        $this->assertSame(1, $transfer->signatures()->count(), 'signature captured at request');
 
-        $svc = app(TransferService::class);
-        $transfer = $svc->createBootToHospital([
-            'hospital_id' => $hospital->id, 'from_holder_user_id' => $repA->id,
-            'hospital_stock_type' => 'consignment',
-            'items' => [['ref_code' => 'X', 'quantity' => 2]],
-        ], $repA);
-        $svc->submit($transfer);
+        // Approve as Josh (the source owner) — now the units move.
+        app(TransferService::class)->approve($transfer->fresh(), $this->josh);
 
-        // repB (not assigned) is denied; repA (assigned) and admin are allowed.
-        $this->assertFalse($repB->can('approve', $transfer), 'unassigned rep denied');
-        $this->assertTrue($repA->can('approve', $transfer), 'assigned rep allowed');
-        $this->assertTrue($admin->can('approve', $transfer), 'admin allowed');
+        $this->assertSame('completed', $transfer->fresh()->status->value);
+        $this->assertSame(1, DeviceUnit::where('location_id', $this->joshBoot->id)->count(), 'Josh: 3 → 1');
+        $this->assertSame(2, DeviceUnit::where('location_id', $this->mikeBoot->id)->where('stock_item_id', $this->trochar->id)->count(), 'Mike: +2');
+        $this->assertSame(0, DeviceUnit::where('status', 'pending_transfer')->count());
+        $this->assertSame(2, $transfer->fresh()->movements()->count(), 'one ledger row per unit');
+        $this->assertSame(1, $transfer->fresh()->documents()->count(), 'transfer note PDF generated');
     }
 
-    public function test_transfer_two_requires_admin_review_after_signature(): void
+    public function test_reject_releases_reserved_units(): void
     {
-        $rep = $this->makeUser(UserRole::GeneralUser, 'rep3@test.com');
-        $admin = $this->makeUser(UserRole::Admin, 'admin3@test.com');
-        $hospital = Hospital::create(['name' => 'Milpark', 'category' => 'netcare']);
-        $hospital->users()->attach($rep->id, ['role' => 'rep']);
+        $units = $this->trochar->units()->pluck('id')->take(1)->all();
+        $transfer = $this->requestTransfer($this->mike, $units);
 
-        InventoryItem::create([
-            'ref_code' => 'Y', 'description' => 'Y', 'quantity' => 10, 'stock_type' => 'boot',
-            'location' => 'boot_stock', 'status' => 'available', 'holder_user_id' => $rep->id,
-        ]);
+        app(TransferService::class)->reject($transfer->fresh(), $this->josh, 'Not available this week');
 
-        $svc = app(TransferService::class);
-        $transfer = $svc->createBootToHospital([
-            'hospital_id' => $hospital->id, 'from_holder_user_id' => $rep->id,
-            'hospital_stock_type' => 'consignment',
-            'items' => [['ref_code' => 'Y', 'quantity' => 3]],
-        ], $rep);
-        $svc->submit($transfer);
-        $svc->approve($transfer->fresh(), $rep);
-        $svc->sign($transfer->fresh(), [
-            'signer_name' => 'Controller', 'signer_role' => 'hospital_controller',
-            'signature_path' => 'sig2.png',
-        ], $rep);
+        $this->assertSame('rejected', $transfer->fresh()->status->value);
+        $this->assertSame('Not available this week', $transfer->fresh()->rejection_reason);
+        $this->assertSame(3, DeviceUnit::where('location_id', $this->joshBoot->id)->where('status', 'available')->count());
+    }
 
-        // After signing, Transfer 2 awaits admin review (stock not yet posted).
-        $this->assertSame('awaiting_admin_review', $transfer->fresh()->status->value);
-        $this->assertSame('delivery_note', $transfer->fresh()->documents->first()?->type);
+    public function test_unit_in_pending_transfer_cannot_be_requested_twice(): void
+    {
+        $unitId = $this->trochar->units()->first()->id;
+        $this->requestTransfer($this->mike, [$unitId]);
 
-        $svc->adminReview($transfer->fresh(), $admin);
-        $transfer = $transfer->fresh();
+        $this->expectException(ValidationException::class);
+        $this->requestTransfer($this->admin, [$unitId]);
+    }
 
-        $this->assertSame('completed', $transfer->status->value);
-        $this->assertSame(3, (int) InventoryItem::where('ref_code', 'Y')
-            ->where('location', 'hospital_stock')->where('hospital_id', $hospital->id)->sum('quantity'));
+    public function test_approval_authority_source_owner_or_admin_only(): void
+    {
+        $units = $this->trochar->units()->pluck('id')->take(1)->all();
+        $transfer = $this->requestTransfer($this->admin, $units); // out of Josh Boot
+
+        $this->assertTrue($this->josh->can('approve', $transfer), 'source owner approves');
+        $this->assertFalse($this->mike->can('approve', $transfer), 'unrelated rep denied');
+        $this->assertTrue($this->admin->can('approve', $transfer), 'admin approves anything');
+    }
+
+    public function test_delivery_note_generated_for_hospital_destination(): void
+    {
+        $hospital = \App\Models\Hospital::create(['name' => 'Zamokuhle Hospital', 'category' => 'private']);
+        $hospitalLocation = Location::create(['name' => 'Zamokuhle Hospital', 'type' => 'hospital', 'hospital_id' => $hospital->id]);
+
+        $units = $this->trochar->units()->pluck('id')->take(1)->all();
+        $transfer = $this->requestTransfer($this->josh, $units, $this->joshBoot, $hospitalLocation);
+
+        app(TransferService::class)->approve($transfer->fresh(), $this->admin);
+
+        $this->assertSame('delivery_note', $transfer->fresh()->documents()->first()?->type);
+        $this->assertSame(1, DeviceUnit::where('location_id', $hospitalLocation->id)->count());
     }
 }

@@ -2,6 +2,7 @@ import type { LucideIcon } from 'lucide-react'
 import {
   LayoutDashboard, Boxes, ArrowLeftRight, ClipboardCheck, CheckSquare,
   Building2, Stethoscope, IdCard, BarChart3, FileSpreadsheet, Users, ScrollText, Bell,
+  PackageSearch, MapPin,
 } from 'lucide-react'
 
 export interface NavItem {
@@ -14,7 +15,9 @@ export interface NavItem {
 
 export const NAV_ITEMS: NavItem[] = [
   { label: 'Dashboard', to: '/', icon: LayoutDashboard },
-  { label: 'Inventory', to: '/inventory', icon: Boxes, permission: 'inventory.view' },
+  { label: 'My Inventory', to: '/inventory', icon: Boxes, permission: 'inventory.view' },
+  { label: 'Stock Catalog', to: '/stock-items', icon: PackageSearch, permission: 'inventory.manage' },
+  { label: 'Locations', to: '/locations', icon: MapPin, permission: 'location.manage' },
   { label: 'Transfers', to: '/transfers', icon: ArrowLeftRight, permission: 'transfer.view' },
   { label: 'Stock Counts', to: '/stock-counts', icon: ClipboardCheck, permission: 'stock_count.capture' },
   { label: 'Approval Centre', to: '/approvals', icon: CheckSquare, permission: 'transfer.approve' },

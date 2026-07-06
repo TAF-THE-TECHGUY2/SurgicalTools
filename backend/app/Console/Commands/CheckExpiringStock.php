@@ -2,7 +2,8 @@
 
 namespace App\Console\Commands;
 
-use App\Models\InventoryItem;
+use App\Enums\DeviceUnitStatus;
+use App\Models\DeviceUnit;
 use App\Services\NotificationService;
 use Illuminate\Console\Command;
 
@@ -14,37 +15,47 @@ class CheckExpiringStock extends Command
 {
     protected $signature = 'surgical:check-expiring-stock';
 
-    protected $description = 'Notify staff of stock approaching expiry (90/60/30 day windows).';
+    protected $description = 'Notify staff of device units approaching expiry (90/60/30 day windows).';
 
     public function handle(NotificationService $notifications): int
     {
         $windows = config('surgical.expiry');
 
-        $items = InventoryItem::query()
+        // Group expiring units per stock item + lot so one alert covers a batch.
+        $units = DeviceUnit::with(['stockItem', 'location'])
+            ->whereIn('status', [DeviceUnitStatus::Available->value, DeviceUnitStatus::PendingTransfer->value])
             ->whereNotNull('expiry_date')
-            ->expiringWithin($windows['warning'])
-            ->where('quantity', '>', 0)
-            ->get();
+            ->whereDate('expiry_date', '<=', now()->addDays($windows['warning']))
+            ->whereDate('expiry_date', '>=', now())
+            ->get()
+            ->groupBy(fn (DeviceUnit $u) => $u->stock_item_id.'|'.$u->lot_number);
 
         $sent = 0;
-        foreach ($items as $item) {
-            $days = $item->days_to_expiry;
+        foreach ($units as $group) {
+            /** @var DeviceUnit $first */
+            $first = $group->first();
+            if (! $first->stockItem) {
+                continue;
+            }
+
+            $days = $first->days_to_expiry;
             $severity = match (true) {
                 $days <= $windows['critical'] => 'critical',
                 $days <= $windows['high']     => 'high',
                 default                       => 'warning',
             };
 
-            $notifications->inventoryAlert(
-                $item,
+            $notifications->stockAlert(
+                $first->stockItem,
                 'expiry',
                 $severity,
-                "{$item->ref_code} (lot {$item->lot_number}) expires in {$days} days — {$severity} priority.",
+                "{$group->count()} unit(s) of {$first->stockItem->name} (lot ".($first->lot_number ?? '—').
+                    ") expire in {$days} days — {$severity} priority.",
             );
             $sent++;
         }
 
-        $this->info("Expiry check complete. {$sent} item(s) flagged.");
+        $this->info("Expiry check complete. {$sent} batch(es) flagged.");
 
         return self::SUCCESS;
     }

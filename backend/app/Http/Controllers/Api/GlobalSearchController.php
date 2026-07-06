@@ -3,17 +3,17 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\DeviceUnit;
 use App\Models\Doctor;
 use App\Models\Hospital;
-use App\Models\InventoryItem;
+use App\Models\StockItem;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 /**
- * Universal search across doctors, hospitals, inventory (ref / lot /
- * description), reps and product descriptions. Returns grouped, link-ready
- * results so the SPA can jump straight to the record.
+ * Universal search across doctors, hospitals, the stock catalog (name /
+ * catalogue no / item code), device serial & lot numbers, and reps.
  */
 class GlobalSearchController extends Controller
 {
@@ -53,24 +53,33 @@ class GlobalSearchController extends Controller
         }
 
         if ($request->user()->can('inventory.view')) {
-            $groups['inventory'] = InventoryItem::search($term)
+            $groups['stock'] = StockItem::search($term)
                 ->limit($limit)->get()
                 ->map(fn ($i) => [
                     'id' => $i->id,
-                    'title' => "{$i->ref_code} — {$i->description}",
-                    'subtitle' => 'Lot '.($i->lot_number ?? '—').' · Qty '.$i->quantity,
-                    'link' => "/inventory/{$i->id}",
+                    'title' => $i->name,
+                    'subtitle' => 'Cat '.($i->catalogue_number ?? '—'),
+                    'link' => "/inventory?item={$i->id}",
+                ]);
+
+            $groups['devices'] = DeviceUnit::with(['stockItem:id,name', 'location:id,name'])
+                ->where(fn ($q) => $q->where('serial_number', 'like', $like)->orWhere('lot_number', 'like', $like))
+                ->limit($limit)->get()
+                ->map(fn ($u) => [
+                    'id' => $u->id,
+                    'title' => ($u->stockItem?->name ?? 'Device').' · SN '.($u->serial_number ?? '—'),
+                    'subtitle' => 'Lot '.($u->lot_number ?? '—').' · '.($u->location?->name ?? '—'),
+                    'link' => "/inventory?item={$u->stock_item_id}",
                 ]);
         }
 
-        // Reps / runners.
         $groups['reps'] = User::where('name', 'like', $like)
             ->orWhere('email', 'like', $like)
             ->limit($limit)->get()
             ->map(fn ($u) => [
                 'id' => $u->id, 'title' => $u->name,
                 'subtitle' => \Illuminate\Support\Str::headline((string) $u->staff_type),
-                'link' => "/users/{$u->id}",
+                'link' => $u->location_id ? "/inventory?location={$u->location_id}" : '/users',
             ]);
 
         return response()->json([

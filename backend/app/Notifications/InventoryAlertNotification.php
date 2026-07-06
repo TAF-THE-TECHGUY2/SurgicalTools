@@ -2,13 +2,13 @@
 
 namespace App\Notifications;
 
-use App\Models\InventoryItem;
+use App\Models\StockItem;
 use Illuminate\Bus\Queueable;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
 
 /**
- * Low-stock and expiry alerts. `severity` is one of:
+ * Low-stock and expiry alerts for a catalog item. `severity` is one of:
  * low_stock | warning | high | critical.
  */
 class InventoryAlertNotification extends Notification
@@ -16,7 +16,7 @@ class InventoryAlertNotification extends Notification
     use Queueable;
 
     public function __construct(
-        public InventoryItem $item,
+        public StockItem $item,
         public string $alertType, // low_stock | expiry
         public string $severity,
         public string $message,
@@ -30,24 +30,23 @@ class InventoryAlertNotification extends Notification
     public function toMail(object $notifiable): MailMessage
     {
         return (new MailMessage)
-            ->subject(strtoupper($this->severity)." — {$this->item->ref_code}")
+            ->subject(strtoupper($this->severity)." — {$this->item->name}")
             ->greeting("Hi {$notifiable->name},")
             ->line($this->message)
-            ->line("Ref: {$this->item->ref_code}  |  Lot: ".($this->item->lot_number ?? 'N/A'))
-            ->line("Quantity on hand: {$this->item->quantity}")
-            ->action('View item', config('app.frontend_url', env('FRONTEND_URL')).'/inventory/'.$this->item->id);
+            ->line('Catalogue no: '.($this->item->catalogue_number ?? '—'))
+            ->action('View stock', config('app.frontend_url', env('FRONTEND_URL')).'/stock-items');
     }
 
     public function toArray(object $notifiable): array
     {
         return [
-            'category'           => 'inventory',
-            'alert_type'         => $this->alertType,
-            'severity'           => $this->severity,
-            'inventory_item_id'  => $this->item->id,
-            'ref_code'           => $this->item->ref_code,
-            'message'            => $this->message,
-            'link'               => "/inventory/{$this->item->id}",
+            'category'      => 'inventory',
+            'alert_type'    => $this->alertType,
+            'severity'      => $this->severity,
+            'stock_item_id' => $this->item->id,
+            'ref_code'      => $this->item->catalogue_number,
+            'message'       => $this->message,
+            'link'          => '/stock-items',
         ];
     }
 }
