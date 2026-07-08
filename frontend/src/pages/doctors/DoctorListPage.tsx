@@ -15,7 +15,17 @@ import { DataTable } from '@/components/ui/Table'
 import type { Column } from '@/components/ui/Table'
 import { LoadingState, ErrorState, EmptyState } from '@/components/ui/States'
 import { humanize } from '@/lib/format'
-import type { Doctor, Paginated } from '@/types'
+import type { Doctor, Hospital, Paginated } from '@/types'
+
+const WEEKDAYS = [
+  { value: 'mon', label: 'Mon' },
+  { value: 'tue', label: 'Tue' },
+  { value: 'wed', label: 'Wed' },
+  { value: 'thu', label: 'Thu' },
+  { value: 'fri', label: 'Fri' },
+  { value: 'sat', label: 'Sat' },
+  { value: 'sun', label: 'Sun' },
+]
 
 interface Filters {
   q: string
@@ -158,6 +168,9 @@ interface CreateForm {
   email: string
   procedure_preferences: string
   notes: string
+  equipment_used: string
+  operating_days: string[]
+  hospital_ids: number[]
 }
 
 const emptyForm: CreateForm = {
@@ -168,6 +181,9 @@ const emptyForm: CreateForm = {
   email: '',
   procedure_preferences: '',
   notes: '',
+  equipment_used: '',
+  operating_days: [],
+  hospital_ids: [],
 }
 
 function CreateDoctorModal({ open, onClose, onCreated }: {
@@ -182,6 +198,34 @@ function CreateDoctorModal({ open, onClose, onCreated }: {
   const set = (key: keyof CreateForm) => (e: { target: { value: string } }) =>
     setForm((prev) => ({ ...prev, [key]: e.target.value }))
 
+  const { data: hospitals } = useQuery({
+    queryKey: ['hospitals', 'for-doctor-form'],
+    queryFn: async () => {
+      try {
+        return (await api.get<Paginated<Hospital>>('/hospitals', { params: { per_page: 200 } })).data.data
+      } catch {
+        return [] as Hospital[]
+      }
+    },
+    enabled: open,
+  })
+
+  const toggleDay = (day: string) =>
+    setForm((prev) => ({
+      ...prev,
+      operating_days: prev.operating_days.includes(day)
+        ? prev.operating_days.filter((d) => d !== day)
+        : [...prev.operating_days, day],
+    }))
+
+  const toggleHospital = (id: number) =>
+    setForm((prev) => ({
+      ...prev,
+      hospital_ids: prev.hospital_ids.includes(id)
+        ? prev.hospital_ids.filter((h) => h !== id)
+        : [...prev.hospital_ids, id],
+    }))
+
   const mutation = useMutation({
     mutationFn: async () => {
       const payload: Record<string, unknown> = {
@@ -192,6 +236,11 @@ function CreateDoctorModal({ open, onClose, onCreated }: {
         email: form.email || null,
         procedure_preferences: form.procedure_preferences || null,
         notes: form.notes || null,
+        operating_days: form.operating_days,
+        equipment_used: form.equipment_used
+          ? form.equipment_used.split(',').map((s) => s.trim()).filter(Boolean)
+          : [],
+        hospital_ids: form.hospital_ids,
       }
       return (await api.post('/doctors', payload)).data
     },
@@ -231,6 +280,46 @@ function CreateDoctorModal({ open, onClose, onCreated }: {
         <Field label="Email">
           <Input type="email" value={form.email} onChange={set('email')} />
         </Field>
+        <div className="sm:col-span-2">
+          <span className="mb-1 block text-sm font-medium text-slate-700">Theatre / operating days</span>
+          <div className="flex flex-wrap gap-2">
+            {WEEKDAYS.map((d) => (
+              <label
+                key={d.value}
+                className={`cursor-pointer rounded-full border px-3 py-1 text-sm ${
+                  form.operating_days.includes(d.value)
+                    ? 'border-brand-500 bg-brand-50 font-medium text-brand-800'
+                    : 'border-slate-200 text-slate-600 hover:border-brand-300'
+                }`}
+              >
+                <input type="checkbox" className="sr-only" checked={form.operating_days.includes(d.value)} onChange={() => toggleDay(d.value)} />
+                {d.label}
+              </label>
+            ))}
+          </div>
+        </div>
+        <div className="sm:col-span-2">
+          <Field label="Equipment used" hint="Comma-separated, e.g. Trochar 12mm, Mesh 15x15">
+            <Input value={form.equipment_used} onChange={set('equipment_used')} />
+          </Field>
+        </div>
+        <div className="sm:col-span-2">
+          <span className="mb-1 block text-sm font-medium text-slate-700">Hospitals</span>
+          {!hospitals || hospitals.length === 0 ? (
+            <p className="text-sm text-slate-400">No hospitals available.</p>
+          ) : (
+            <ul className="max-h-40 space-y-1 overflow-y-auto rounded-lg border border-slate-200 p-2">
+              {hospitals.map((h) => (
+                <li key={h.id}>
+                  <label className="flex items-center gap-2 rounded-md px-2 py-1 text-sm text-slate-700 hover:bg-slate-50">
+                    <input type="checkbox" checked={form.hospital_ids.includes(h.id)} onChange={() => toggleHospital(h.id)} />
+                    {h.name}
+                  </label>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
         <Field label="Procedure preferences" required={false}>
           <Textarea value={form.procedure_preferences} onChange={set('procedure_preferences')} />
         </Field>

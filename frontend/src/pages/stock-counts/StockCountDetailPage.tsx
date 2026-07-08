@@ -34,7 +34,7 @@ export default function StockCountDetailPage() {
 
   const { data: count, isLoading, error } = useQuery({
     queryKey: ['stock-counts', id],
-    queryFn: async () => (await api.get<StockCount>(`/stock-counts/${id}`)).data,
+    queryFn: async () => (await api.get<{ data: StockCount }>(`/stock-counts/${id}`)).data.data,
     enabled: Boolean(id),
   })
 

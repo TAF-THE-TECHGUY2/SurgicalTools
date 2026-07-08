@@ -26,8 +26,20 @@ class InventoryPresenter
             ->whereIn('status', self::ON_HAND);
 
         $items = StockItem::query()
-            ->search($q)
             ->whereHas('units', $scope)
+            // Search matches the item (name / catalogue no / REF) or any of its
+            // units at this location by lot or serial number.
+            ->when($q, function ($query) use ($q, $scope) {
+                $like = '%'.$q.'%';
+                $query->where(function ($w) use ($like, $scope) {
+                    $w->where('name', 'like', $like)
+                        ->orWhere('catalogue_number', 'like', $like)
+                        ->orWhere('item_code', 'like', $like)
+                        ->orWhereHas('units', fn ($u) => $scope($u)
+                            ->where(fn ($x) => $x->where('lot_number', 'like', $like)
+                                ->orWhere('serial_number', 'like', $like)));
+                });
+            })
             ->with(['units' => fn ($units) => $scope($units)->orderByRaw('expiry_date IS NULL, expiry_date ASC')])
             ->orderBy('name')
             ->get();

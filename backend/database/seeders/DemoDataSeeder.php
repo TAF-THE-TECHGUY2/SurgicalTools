@@ -24,10 +24,10 @@ class DemoDataSeeder extends Seeder
     public function run(): void
     {
         // -- Users -----------------------------------------------------------
-        $super = $this->user('Sarah Naidoo', 'super@surgical.test', UserRole::SuperAdmin, 'office');
+        $super = $this->user('MJ', 'mj@surgical.test', UserRole::SuperAdmin, 'office');
         $admin = $this->user('David Botha', 'admin@surgical.test', UserRole::Admin, 'office');
-        $mike  = $this->user('Mike Dlamini', 'mike@surgical.test', UserRole::GeneralUser, 'rep');
-        $josh  = $this->user('Josh van Wyk', 'josh@surgical.test', UserRole::GeneralUser, 'rep');
+        $mike  = $this->user('Mike Oliver', 'mike@surgical.test', UserRole::GeneralUser, 'rep');
+        $josh  = $this->user('Josh E Hall', 'josh@surgical.test', UserRole::GeneralUser, 'rep');
 
         // -- Hospitals (master data behind the hospital locations) -----------
         $zamokuhle = Hospital::firstOrCreate(
@@ -157,10 +157,10 @@ class DemoDataSeeder extends Seeder
 
         $this->command?->info('Demo world seeded. Logins (password: "password"):');
         $this->command?->table(['Role', 'Email', 'My Inventory'], [
-            ['Super Admin', 'super@surgical.test', 'JHB Office (sees all)'],
+            ['Super Admin', 'mj@surgical.test', 'JHB Office (sees all)'],
             ['Admin', 'admin@surgical.test', 'JHB Office'],
-            ['General (rep)', 'mike@surgical.test', 'Mike Boot'],
-            ['General (rep)', 'josh@surgical.test', 'Josh Boot'],
+            ['General (rep)', 'mike@surgical.test', 'Mike Boot (Mike Oliver)'],
+            ['General (rep)', 'josh@surgical.test', 'Josh Boot (Josh E Hall)'],
         ]);
     }
 

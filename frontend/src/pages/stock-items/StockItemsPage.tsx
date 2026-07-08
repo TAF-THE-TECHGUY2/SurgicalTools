@@ -59,7 +59,7 @@ export default function StockItemsPage() {
         <CardBody>
           <div className="relative max-w-md">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <Input className="pl-9" placeholder="Search name, catalogue number, item code…" value={q}
+            <Input className="pl-9" placeholder="Search name, catalogue number, REF…" value={q}
               onChange={(e) => { setQ(e.target.value); setPage(1) }} />
           </div>
         </CardBody>
@@ -170,7 +170,7 @@ function StockItemCard({ item, onEdit, onReceive, onChanged }: {
           {open ? <ChevronDown className="h-4 w-4 text-slate-400" /> : <ChevronRight className="h-4 w-4 text-slate-400" />}
           <span className="font-medium text-slate-800">{item.name}</span>
           <span className="hidden text-xs text-slate-400 sm:inline">
-            Cat {item.catalogue_number ?? '—'} · Code {item.item_code ?? '—'}
+            Cat No {item.catalogue_number ?? '—'} · REF {item.item_code ?? '—'}
           </span>
           {!item.is_active && <Badge tone="gray">Inactive</Badge>}
         </button>
@@ -272,6 +272,17 @@ function ItemFormModal({ open, item, onClose, onSaved }: {
   const blank = { name: '', catalogue_number: '', item_code: '', description: '', uom: '', unit_price: '', min_threshold: '' }
   const [form, setForm] = useState(blank)
 
+  // Create mode: optionally receive the first batch straight into a location
+  // (hospital / rep boot / office) so imported stock is assigned immediately.
+  const blankStock = { location_id: '', lot_number: '', expiry_date: '', quantity: '', serials: '' }
+  const [initialStock, setInitialStock] = useState(blankStock)
+
+  const { data: locations } = useQuery({
+    queryKey: ['locations'],
+    queryFn: async () => (await api.get<{ data: LocationEntity[] }>('/locations')).data.data,
+    enabled: open && !item,
+  })
+
   const [syncKey, setSyncKey] = useState('')
   const currentKey = `${open}-${item?.id ?? 'new'}`
   if (open && syncKey !== currentKey) {
@@ -285,6 +296,7 @@ function ItemFormModal({ open, item, onClose, onSaved }: {
       unit_price: item.unit_price != null ? String(item.unit_price) : '',
       min_threshold: item.min_threshold != null ? String(item.min_threshold) : '',
     } : blank)
+    setInitialStock(blankStock)
   }
 
   const set = (key: keyof typeof blank) => (e: { target: { value: string } }) =>
@@ -301,9 +313,30 @@ function ItemFormModal({ open, item, onClose, onSaved }: {
         unit_price: form.unit_price === '' ? null : Number(form.unit_price),
         min_threshold: form.min_threshold === '' ? null : Number(form.min_threshold),
       }
-      return item
-        ? (await api.put(`/stock-items/${item.id}`, payload)).data
-        : (await api.post('/stock-items', payload)).data
+
+      if (item) {
+        return (await api.put(`/stock-items/${item.id}`, payload)).data
+      }
+
+      const created = (await api.post<{ data: StockItem }>('/stock-items', payload)).data.data
+
+      // Optionally receive the first batch straight into the chosen location.
+      const serials = initialStock.serials.split(/[\n,]/).map((s) => s.trim()).filter(Boolean)
+      const qty = serials.length > 0 ? serials.length : Number(initialStock.quantity || 0)
+      if (initialStock.location_id && qty > 0) {
+        const units = Array.from({ length: qty }, (_, i) => ({
+          serial_number: serials[i] ?? null,
+          lot_number: initialStock.lot_number || null,
+          expiry_date: initialStock.expiry_date || null,
+        }))
+        await api.post(`/stock-items/${created.id}/units`, {
+          location_id: Number(initialStock.location_id),
+          units,
+        })
+        toast.success(`${qty} device(s) assigned to the selected location.`)
+      }
+
+      return created
     },
     onSuccess: onSaved,
     onError: (e) => toast.error(apiError(e)),
@@ -313,9 +346,15 @@ function ItemFormModal({ open, item, onClose, onSaved }: {
     <Modal open={open} onClose={onClose} title={item ? 'Edit stock item' : 'New stock item'} size="lg">
       <form className="grid gap-4 sm:grid-cols-2" onSubmit={(e) => { e.preventDefault(); mutation.mutate() }}>
         <Field label="Name" required><Input value={form.name} onChange={set('name')} required /></Field>
-        <Field label="Catalogue number"><Input value={form.catalogue_number} onChange={set('catalogue_number')} /></Field>
-        <Field label="Item code"><Input value={form.item_code} onChange={set('item_code')} /></Field>
-        <Field label="Unit of measure"><Input value={form.uom} onChange={set('uom')} /></Field>
+        <Field label="Catalogue number" hint="The manufacturer's catalogue number.">
+          <Input value={form.catalogue_number} onChange={set('catalogue_number')} />
+        </Field>
+        <Field label="REF" hint="Your internal reference code.">
+          <Input value={form.item_code} onChange={set('item_code')} />
+        </Field>
+        <Field label="Unit measure" hint="e.g. each, box of 10.">
+          <Input value={form.uom} onChange={set('uom')} />
+        </Field>
         <Field label="Unit price"><Input type="number" min={0} step="0.01" value={form.unit_price} onChange={set('unit_price')} /></Field>
         <Field label="Min threshold" hint="Low-stock alerts fire at or below this level.">
           <Input type="number" min={0} value={form.min_threshold} onChange={set('min_threshold')} />
@@ -323,6 +362,46 @@ function ItemFormModal({ open, item, onClose, onSaved }: {
         <div className="sm:col-span-2">
           <Field label="Description"><Textarea value={form.description} onChange={set('description')} /></Field>
         </div>
+
+        {!item && (
+          <div className="sm:col-span-2 rounded-xl border border-brand-100 bg-brand-50/40 p-4">
+            <p className="mb-1 text-sm font-semibold text-slate-800">Assign initial stock (optional)</p>
+            <p className="mb-3 text-xs text-slate-500">
+              Just imported this stock? Receive the first batch straight into a hospital, rep boot or the office.
+            </p>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="Assign to location">
+                <Select value={initialStock.location_id}
+                  onChange={(e) => setInitialStock((p) => ({ ...p, location_id: e.target.value }))}>
+                  <option value="">— Don't assign yet —</option>
+                  {locations?.map((l) => (
+                    <option key={l.id} value={l.id}>{l.name}{l.owner ? ` — ${l.owner.name}` : ''}</option>
+                  ))}
+                </Select>
+              </Field>
+              <Field label="Lot number">
+                <Input value={initialStock.lot_number}
+                  onChange={(e) => setInitialStock((p) => ({ ...p, lot_number: e.target.value }))} />
+              </Field>
+              <Field label="Expiry date">
+                <Input type="date" value={initialStock.expiry_date}
+                  onChange={(e) => setInitialStock((p) => ({ ...p, expiry_date: e.target.value }))} />
+              </Field>
+              <Field label="Quantity" hint="Ignored if you list serial numbers below.">
+                <Input type="number" min={0} value={initialStock.quantity}
+                  onChange={(e) => setInitialStock((p) => ({ ...p, quantity: e.target.value }))} />
+              </Field>
+              <div className="sm:col-span-2">
+                <Field label="Serial numbers (optional)" hint="One per line or comma-separated — creates one device per serial.">
+                  <Textarea value={initialStock.serials}
+                    onChange={(e) => setInitialStock((p) => ({ ...p, serials: e.target.value }))}
+                    placeholder={'TR001\nTR002\nTR003'} />
+                </Field>
+              </div>
+            </div>
+          </div>
+        )}
+
         <div className="flex justify-end gap-2 sm:col-span-2">
           <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
           <Button type="submit" loading={mutation.isPending}>{item ? 'Save changes' : 'Create item'}</Button>

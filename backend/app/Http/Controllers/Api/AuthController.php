@@ -21,7 +21,8 @@ class AuthController extends Controller
             'device_name' => ['nullable', 'string'],
         ]);
 
-        $user = User::where('email', $credentials['email'])->first();
+        // Case-insensitive email match so "MJ@Surgical.test" logs in fine.
+        $user = User::whereRaw('LOWER(email) = ?', [mb_strtolower($credentials['email'])])->first();
 
         if (! $user || ! Hash::check($credentials['password'], $user->password)) {
             throw ValidationException::withMessages([

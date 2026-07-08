@@ -170,7 +170,7 @@ function LocationInventory({ endpoint, q, onQ, emptyHint }: {
         <CardBody>
           <div className="relative max-w-md">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <Input className="pl-9" placeholder="Search by name, catalogue number, item code…" value={q} onChange={(e) => onQ(e.target.value)} />
+            <Input className="pl-9" placeholder="Search by name, catalogue number, REF, lot number…" value={q} onChange={(e) => onQ(e.target.value)} />
           </div>
         </CardBody>
       </Card>
@@ -186,6 +186,7 @@ function LocationInventory({ endpoint, q, onQ, emptyHint }: {
                   <th className="w-8 px-2 py-3" />
                   <th className="px-4 py-3 font-semibold">Stock Item</th>
                   <th className="px-4 py-3 font-semibold">Cat No.</th>
+                  <th className="px-4 py-3 font-semibold">REF</th>
                   <th className="px-4 py-3 font-semibold text-right">Quantity</th>
                   <th className="px-4 py-3 font-semibold text-right">Available</th>
                   <th className="px-4 py-3 font-semibold text-right">Pending Out</th>
@@ -211,6 +212,7 @@ function StockGroupRow({ row, open, onToggle }: { row: GroupedStockRow; open: bo
         <td className="px-2 py-3 text-slate-400">{open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}</td>
         <td className="px-4 py-3 font-medium text-slate-800">{row.name}</td>
         <td className="px-4 py-3 text-slate-600">{row.catalogue_number ?? '—'}</td>
+        <td className="px-4 py-3 text-slate-600">{row.item_code ?? '—'}</td>
         <td className="px-4 py-3 text-right text-lg font-bold text-slate-900">{row.quantity}</td>
         <td className="px-4 py-3 text-right text-emerald-700">{row.available}</td>
         <td className="px-4 py-3 text-right">
@@ -220,7 +222,7 @@ function StockGroupRow({ row, open, onToggle }: { row: GroupedStockRow; open: bo
       {open && (
         <tr className="border-b border-slate-100 bg-slate-50/60">
           <td />
-          <td colSpan={5} className="px-4 py-3">
+          <td colSpan={6} className="px-4 py-3">
             <table className="w-full text-xs">
               <thead>
                 <tr className="text-left uppercase tracking-wide text-slate-400">

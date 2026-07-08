@@ -26,7 +26,7 @@ export default function HospitalDetailPage() {
 
   const { data: hospital, isLoading, error } = useQuery({
     queryKey: ['hospitals', id],
-    queryFn: async () => (await api.get<Hospital>(`/hospitals/${id}`)).data,
+    queryFn: async () => (await api.get<{ data: Hospital }>(`/hospitals/${id}`)).data.data,
     enabled: !!id,
   })
 
