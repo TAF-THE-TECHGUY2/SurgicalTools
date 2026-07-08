@@ -16,7 +16,7 @@ export default defineConfig({
         name: 'Surgical Devices ERP',
         short_name: 'Surgical ERP',
         description: 'Medical device inventory & transfer management',
-        theme_color: '#0f766e',
+        theme_color: '#1e3c8c',
         background_color: '#f8fafc',
         display: 'standalone',
         start_url: '/',

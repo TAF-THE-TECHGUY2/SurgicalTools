@@ -2,20 +2,20 @@
 
 /*
   Surgical Devices ERP — design system
-  Clinical, calm, high-contrast. Teal primary signals "medical/clean";
-  slate neutrals keep dense data screens readable.
+  Brand palette derived from the SD logo: light blue #29A9E1 → navy #1E3C8C.
+  Slate neutrals keep dense data screens readable.
 */
 @theme {
-  --color-brand-50: #f0fdfa;
-  --color-brand-100: #ccfbf1;
-  --color-brand-200: #99f6e4;
-  --color-brand-300: #5eead4;
-  --color-brand-400: #2dd4bf;
-  --color-brand-500: #14b8a6;
-  --color-brand-600: #0d9488;
-  --color-brand-700: #0f766e;
-  --color-brand-800: #115e59;
-  --color-brand-900: #134e4a;
+  --color-brand-50: #eff8fe;
+  --color-brand-100: #d9eefc;
+  --color-brand-200: #b6e0fa;
+  --color-brand-300: #7ccbf5;
+  --color-brand-400: #3fb2ec;
+  --color-brand-500: #29a9e1;
+  --color-brand-600: #1a86c4;
+  --color-brand-700: #1a6aa8;
+  --color-brand-800: #1c4f8f;
+  --color-brand-900: #1e3c8c;
 
   --color-ink: #0f172a;
   --color-surface: #f8fafc;

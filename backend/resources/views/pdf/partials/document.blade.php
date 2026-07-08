@@ -11,15 +11,15 @@
     <style>
         * { font-family: DejaVu Sans, sans-serif; }
         body { color: #1f2937; font-size: 12px; margin: 0; }
-        .header { border-bottom: 3px solid #0d9488; padding-bottom: 12px; margin-bottom: 18px; }
-        .brand { font-size: 20px; font-weight: bold; color: #0f766e; }
+        .header { border-bottom: 3px solid #29A9E1; padding-bottom: 12px; margin-bottom: 18px; }
+        .brand { font-size: 20px; font-weight: bold; color: #1E3C8C; }
         .doc-title { font-size: 16px; font-weight: bold; text-transform: uppercase; color: #111827; margin-top: 4px; }
         .muted { color: #6b7280; }
         .meta-table { width: 100%; margin-bottom: 18px; }
         .meta-table td { vertical-align: top; padding: 2px 0; }
         .label { color: #6b7280; font-size: 10px; text-transform: uppercase; letter-spacing: .04em; }
         table.items { width: 100%; border-collapse: collapse; margin-top: 8px; }
-        table.items th { background: #0f766e; color: #fff; text-align: left; padding: 7px 8px; font-size: 10px; text-transform: uppercase; }
+        table.items th { background: #1E3C8C; color: #fff; text-align: left; padding: 7px 8px; font-size: 10px; text-transform: uppercase; }
         table.items td { padding: 7px 8px; border-bottom: 1px solid #e5e7eb; }
         table.items tr:nth-child(even) td { background: #f9fafb; }
         .totals { margin-top: 10px; text-align: right; font-weight: bold; }
@@ -27,14 +27,14 @@
         .sign-line { border-top: 1px solid #9ca3af; width: 240px; margin-top: 40px; padding-top: 4px; font-size: 10px; }
         .sig-img { max-height: 70px; }
         .footer { position: fixed; bottom: 0; left: 0; right: 0; font-size: 9px; color: #9ca3af; border-top: 1px solid #e5e7eb; padding-top: 6px; }
-        .pill { display: inline-block; background: #ecfdf5; color: #047857; border: 1px solid #6ee7b7; border-radius: 9999px; padding: 2px 10px; font-size: 10px; }
+        .pill { display: inline-block; background: #eff8fe; color: #1c4f8f; border: 1px solid #7ccbf5; border-radius: 9999px; padding: 2px 10px; font-size: 10px; }
     </style>
 </head>
 <body>
     <div class="header">
         <table style="width:100%"><tr>
             <td>
-                <div class="brand">Surgical Devices</div>
+                <div class="brand"><span style="color:#29A9E1">SURGICAL</span> <span style="color:#1E3C8C">DEVICES</span></div>
                 <div class="muted">Medical Device Inventory ERP</div>
             </td>
             <td style="text-align:right">

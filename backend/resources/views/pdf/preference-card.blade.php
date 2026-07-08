@@ -6,20 +6,20 @@
     <style>
         * { font-family: DejaVu Sans, sans-serif; }
         body { color: #1f2937; font-size: 12px; }
-        .header { border-bottom: 3px solid #0d9488; padding-bottom: 10px; margin-bottom: 16px; }
-        .brand { font-size: 18px; font-weight: bold; color: #0f766e; }
+        .header { border-bottom: 3px solid #29A9E1; padding-bottom: 10px; margin-bottom: 16px; }
+        .brand { font-size: 18px; font-weight: bold; color: #1E3C8C; }
         h1 { font-size: 16px; margin: 4px 0; }
         .muted { color: #6b7280; }
         .label { color: #6b7280; font-size: 10px; text-transform: uppercase; letter-spacing:.04em; }
         table { width: 100%; border-collapse: collapse; margin-top: 8px; }
-        th { background: #0f766e; color:#fff; text-align:left; padding:6px 8px; font-size:10px; text-transform:uppercase; }
+        th { background: #1E3C8C; color:#fff; text-align:left; padding:6px 8px; font-size:10px; text-transform:uppercase; }
         td { padding:6px 8px; border-bottom:1px solid #e5e7eb; }
         .box { background:#f9fafb; border:1px solid #e5e7eb; border-radius:6px; padding:10px; margin-top:10px; }
     </style>
 </head>
 <body>
     <div class="header">
-        <div class="brand">Surgical Devices</div>
+        <div class="brand"><span style="color:#29A9E1">SURGICAL</span> <span style="color:#1E3C8C">DEVICES</span></div>
         <h1>Doctor Preference Card</h1>
         <div class="muted">{{ $card->procedure_name }}</div>
     </div>

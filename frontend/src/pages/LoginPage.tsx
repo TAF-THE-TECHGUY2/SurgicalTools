@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate, useLocation, Navigate } from 'react-router-dom'
-import { Activity } from 'lucide-react'
+import { LogoMark } from '@/components/Logo'
 import { useAuth } from '@/auth/AuthContext'
 import { Button } from '@/components/ui/Button'
 import { Field, Input } from '@/components/ui/Field'
@@ -38,11 +38,13 @@ export default function LoginPage() {
         {/* Brand panel */}
         <div className="hidden flex-col justify-between bg-brand-700 p-10 text-white md:flex">
           <div className="flex items-center gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-white/15">
-              <Activity className="h-6 w-6" />
+            <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-white p-1.5">
+              <LogoMark className="h-full w-full" />
             </div>
             <div>
-              <div className="text-lg font-bold">Surgical Devices</div>
+              <div className="text-lg font-bold tracking-wide">
+                <span className="text-[#7CCBF5]">SURGICAL</span> <span className="text-white">DEVICES</span>
+              </div>
               <div className="text-sm text-brand-100">Inventory ERP</div>
             </div>
           </div>
