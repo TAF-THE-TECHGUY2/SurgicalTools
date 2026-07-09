@@ -39,7 +39,7 @@ class InventoryService
 
                 $this->log([
                     'device_unit_id'  => $unit->id,
-                    'ref_code'        => $item->catalogue_number ?? (string) $item->id,
+                    'ref_code'        => $item->item_code ?? $item->catalogue_number ?? (string) $item->id,
                     'lot_number'      => $unit->lot_number,
                     'quantity'        => 1,
                     'movement_type'   => 'receipt',
@@ -76,7 +76,7 @@ class InventoryService
 
                 $this->log([
                     'device_unit_id'   => $unit->id,
-                    'ref_code'         => $item->catalogue_number ?? (string) $item->id,
+                    'ref_code'         => $item->item_code ?? $item->catalogue_number ?? (string) $item->id,
                     'lot_number'       => $unit->lot_number,
                     'quantity'         => 1,
                     'movement_type'    => 'count_correction',
@@ -104,7 +104,7 @@ class InventoryService
 
             $this->log([
                 'device_unit_id'   => $unit->id,
-                'ref_code'         => $unit->stockItem?->catalogue_number ?? (string) $unit->stock_item_id,
+                'ref_code'         => $unit->stockItem?->item_code ?? $unit->stockItem?->catalogue_number ?? (string) $unit->stock_item_id,
                 'lot_number'       => $unit->lot_number,
                 'quantity'         => 1,
                 'movement_type'    => 'adjustment',

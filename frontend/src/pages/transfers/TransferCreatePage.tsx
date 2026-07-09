@@ -292,7 +292,7 @@ function StockPicker({ fromId, fromName, selected, onToggle }: {
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div className="relative w-full max-w-md">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-          <Input className="pl-9" placeholder="Search name, catalogue number, REF, lot number…" value={q} onChange={(e) => setQ(e.target.value)} />
+          <Input className="pl-9" placeholder="Search name, REF, lot or serial number…" value={q} onChange={(e) => setQ(e.target.value)} />
         </div>
         <Badge tone={selected.size ? 'teal' : 'gray'}>{selected.size} device(s) selected</Badge>
       </div>
@@ -314,7 +314,7 @@ function StockPicker({ fromId, fromName, selected, onToggle }: {
                     {isOpen ? <ChevronDown className="h-4 w-4 text-slate-400" /> : <ChevronRight className="h-4 w-4 text-slate-400" />}
                     <span className="font-medium text-slate-800">{row.name}</span>
                     <span className="text-xs text-slate-400">
-                      Cat No {row.catalogue_number ?? '—'} · REF {row.item_code ?? '—'}
+                      REF {row.item_code ?? row.catalogue_number ?? '—'}
                     </span>
                   </span>
                   <span className="flex items-center gap-2 text-sm">

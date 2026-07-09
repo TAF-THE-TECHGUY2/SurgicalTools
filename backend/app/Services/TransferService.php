@@ -92,7 +92,7 @@ class TransferService
             foreach ($units as $unit) {
                 $transfer->items()->create([
                     'device_unit_id' => $unit->id,
-                    'ref_code'       => $unit->stockItem?->catalogue_number ?? (string) $unit->stock_item_id,
+                    'ref_code'       => $unit->stockItem?->item_code ?? $unit->stockItem?->catalogue_number ?? (string) $unit->stock_item_id,
                     'description'    => $unit->stockItem?->name,
                     'serial_number'  => $unit->serial_number,
                     'lot_number'     => $unit->lot_number,

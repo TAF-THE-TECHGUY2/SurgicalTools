@@ -88,15 +88,15 @@ class DemoDataSeeder extends Seeder
         // -- Stock catalog -----------------------------------------------------
         $trochar = StockItem::firstOrCreate(
             ['catalogue_number' => 'TRO-12'],
-            ['name' => 'Trochar', 'item_code' => 'TR', 'uom' => 'each', 'unit_price' => 850, 'min_threshold' => 5],
+            ['name' => 'Trochar', 'item_code' => 'TRO-12', 'uom' => 'each', 'unit_price' => 850, 'min_threshold' => 5],
         );
         $guideWire = StockItem::firstOrCreate(
             ['catalogue_number' => 'GW-035'],
-            ['name' => 'Guide Wire', 'item_code' => 'GW', 'uom' => 'each', 'unit_price' => 320, 'min_threshold' => 5],
+            ['name' => 'Guide Wire', 'item_code' => 'GW-035', 'uom' => 'each', 'unit_price' => 320, 'min_threshold' => 5],
         );
         $mesh = StockItem::firstOrCreate(
             ['catalogue_number' => 'MESH-15'],
-            ['name' => 'Mesh', 'item_code' => 'ME', 'uom' => 'each', 'unit_price' => 3200, 'min_threshold' => 4],
+            ['name' => 'Mesh', 'item_code' => 'MESH-15', 'uom' => 'each', 'unit_price' => 3200, 'min_threshold' => 4],
         );
 
         // -- Device units (serial / lot / expiry per the spec example) --------

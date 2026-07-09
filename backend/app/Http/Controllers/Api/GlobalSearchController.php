@@ -58,7 +58,7 @@ class GlobalSearchController extends Controller
                 ->map(fn ($i) => [
                     'id' => $i->id,
                     'title' => $i->name,
-                    'subtitle' => 'Cat '.($i->catalogue_number ?? '—'),
+                    'subtitle' => 'REF '.($i->item_code ?? $i->catalogue_number ?? '—'),
                     'link' => "/inventory?item={$i->id}",
                 ]);
 
