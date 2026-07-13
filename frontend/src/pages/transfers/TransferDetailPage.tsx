@@ -74,7 +74,7 @@ export default function TransferDetailPage() {
 
   const itemColumns: Column<TransferItem>[] = [
     { key: 'item', header: 'Item', render: (r) => <span className="font-medium text-slate-800">{r.description ?? '—'}</span> },
-    { key: 'ref_code', header: 'REF', render: (r) => r.ref_code },
+    { key: 'ref_code', header: 'Cat No', render: (r) => r.ref_code },
     { key: 'serial', header: 'Serial', render: (r) => r.serial_number ?? '—' },
     { key: 'lot', header: 'Lot', render: (r) => r.lot_number ?? '—' },
     { key: 'expiry', header: 'Expiry', render: (r) => formatDate(r.expiry_date) },

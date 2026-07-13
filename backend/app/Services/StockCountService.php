@@ -50,7 +50,7 @@ class StockCountService
                 $item = StockItem::find($stockItemId);
                 $count->items()->create([
                     'stock_item_id'     => $stockItemId,
-                    'ref_code'          => $item?->item_code ?? $item?->catalogue_number ?? (string) $stockItemId,
+                    'ref_code'          => $item?->catalogue_number ?? (string) $stockItemId,
                     'description'       => $item?->name,
                     'expected_quantity' => (int) $qty,
                 ]);

@@ -70,7 +70,7 @@
     <table class="items">
         <thead>
             <tr>
-                <th>REF</th>
+                <th>Cat No.</th>
                 <th>Description</th>
                 <th>Serial No.</th>
                 <th>Lot No.</th>

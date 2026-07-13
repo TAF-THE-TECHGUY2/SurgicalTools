@@ -59,7 +59,7 @@ export default function StockItemsPage() {
         <CardBody>
           <div className="relative max-w-md">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <Input className="pl-9" placeholder="Search name or REF…" value={q}
+            <Input className="pl-9" placeholder="Search name, catalogue number, REF…" value={q}
               onChange={(e) => { setQ(e.target.value); setPage(1) }} />
           </div>
         </CardBody>
@@ -170,7 +170,7 @@ function StockItemCard({ item, onEdit, onReceive, onChanged }: {
           {open ? <ChevronDown className="h-4 w-4 text-slate-400" /> : <ChevronRight className="h-4 w-4 text-slate-400" />}
           <span className="font-medium text-slate-800">{item.name}</span>
           <span className="hidden text-xs text-slate-400 sm:inline">
-            REF {item.item_code ?? item.catalogue_number ?? '—'}
+            Cat No {item.catalogue_number ?? '—'} · REF {item.item_code ?? '—'}
           </span>
           {!item.is_active && <Badge tone="gray">Inactive</Badge>}
         </button>
@@ -346,7 +346,10 @@ function ItemFormModal({ open, item, onClose, onSaved }: {
     <Modal open={open} onClose={onClose} title={item ? 'Edit stock item' : 'New stock item'} size="lg">
       <form className="grid gap-4 sm:grid-cols-2" onSubmit={(e) => { e.preventDefault(); mutation.mutate() }}>
         <Field label="Name" required><Input value={form.name} onChange={set('name')} required /></Field>
-        <Field label="REF" hint="The item's reference code.">
+        <Field label="Catalogue number" hint="The manufacturer's catalogue number.">
+          <Input value={form.catalogue_number} onChange={set('catalogue_number')} />
+        </Field>
+        <Field label="REF" hint="Your internal reference code.">
           <Input value={form.item_code} onChange={set('item_code')} />
         </Field>
         <Field label="Unit measure" hint="e.g. each, box of 10.">
