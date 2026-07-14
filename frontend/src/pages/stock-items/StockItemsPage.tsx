@@ -328,7 +328,7 @@ function ItemFormModal({ open, item, onClose, onSaved }: {
 }) {
   const toast = useToast()
 
-  const blank = { name: '', item_code: '', description: '', uom: '', unit_price: '', min_threshold: '' }
+  const blank = { name: '', catalogue_number: '', item_code: '', description: '', uom: '', unit_price: '', min_threshold: '' }
   const [form, setForm] = useState(blank)
 
   // Create mode: optionally receive the first batch straight into a location
@@ -348,6 +348,7 @@ function ItemFormModal({ open, item, onClose, onSaved }: {
     setSyncKey(currentKey)
     setForm(item ? {
       name: item.name,
+      catalogue_number: item.catalogue_number ?? '',
       item_code: item.item_code ?? '',
       description: item.description ?? '',
       uom: item.uom ?? '',
@@ -364,6 +365,7 @@ function ItemFormModal({ open, item, onClose, onSaved }: {
     mutationFn: async () => {
       const payload = {
         name: form.name,
+        catalogue_number: form.catalogue_number || null,
         item_code: form.item_code || null,
         description: form.description || null,
         uom: form.uom || null,
@@ -403,15 +405,18 @@ function ItemFormModal({ open, item, onClose, onSaved }: {
     <Modal open={open} onClose={onClose} title={item ? 'Edit stock item' : 'New stock item'} size="lg">
       <form className="grid gap-4 sm:grid-cols-2" onSubmit={(e) => { e.preventDefault(); mutation.mutate() }}>
         <Field label="Name" required><Input value={form.name} onChange={set('name')} required /></Field>
+        <Field label="Catalogue number" hint="The manufacturer's catalogue number.">
+          <Input value={form.catalogue_number} onChange={set('catalogue_number')} />
+        </Field>
+        <Field label="REF" hint="Your internal reference code.">
+          <Input value={form.item_code} onChange={set('item_code')} />
+        </Field>
         {!item && (
           <Field label="Lot number" hint="Applied to the initial stock batch below.">
             <Input value={initialStock.lot_number}
               onChange={(e) => setInitialStock((p) => ({ ...p, lot_number: e.target.value }))} />
           </Field>
         )}
-        <Field label="REF" hint="Your internal reference code.">
-          <Input value={form.item_code} onChange={set('item_code')} />
-        </Field>
         <Field label="Unit measure" hint="e.g. each, box of 10.">
           <Input value={form.uom} onChange={set('uom')} />
         </Field>
