@@ -22,6 +22,7 @@ class StockItemResource extends JsonResource
             'units_count'      => $this->whenCounted('units'),
             'units'            => DeviceUnitResource::collection($this->whenLoaded('units')),
             'created_at'       => $this->created_at,
+            'deleted_at'       => $this->deleted_at,
         ];
     }
 }

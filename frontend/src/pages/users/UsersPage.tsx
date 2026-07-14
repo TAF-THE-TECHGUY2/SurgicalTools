@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Plus } from 'lucide-react'
+import { Plus, ShieldCheck } from 'lucide-react'
 import { api, apiError } from '@/lib/api'
 import { useAuth } from '@/auth/AuthContext'
 import { useToast } from '@/components/ToastProvider'
@@ -16,7 +16,8 @@ import { LoadingState, ErrorState } from '@/components/ui/States'
 import { humanize } from '@/lib/format'
 import type { Hospital, LocationEntity, Paginated, User } from '@/types'
 
-interface RoleOption { id: number; name: string }
+interface PermissionOption { id: number; name: string }
+interface RoleOption { id: number; name: string; permissions: PermissionOption[] }
 
 type AssignmentRole = 'rep' | 'runner'
 interface HospitalAssignment { checked: boolean; role: AssignmentRole }
@@ -36,11 +37,15 @@ export default function UsersPage() {
   const [q, setQ] = useState('')
   const [open, setOpen] = useState(false)
   const [form, setForm] = useState({ ...emptyForm })
+  const [createPermissions, setCreatePermissions] = useState<string[]>([])
 
   const [editing, setEditing] = useState<User | null>(null)
   const [editForm, setEditForm] = useState({ ...emptyForm })
   const [assignments, setAssignments] = useState<Record<number, HospitalAssignment>>({})
   const [editLocationId, setEditLocationId] = useState('')
+  const [editPermissions, setEditPermissions] = useState<string[]>([])
+  const [roleEditingId, setRoleEditingId] = useState('')
+  const [rolePermissions, setRolePermissions] = useState<string[]>([])
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['users', q],
@@ -50,6 +55,11 @@ export default function UsersPage() {
   const { data: roles } = useQuery({
     queryKey: ['users', 'roles'],
     queryFn: async () => (await api.get<RoleOption[]>('/users/roles')).data,
+  })
+
+  const { data: permissions = [] } = useQuery({
+    queryKey: ['users', 'permissions'],
+    queryFn: async () => (await api.get<string[]>('/users/permissions')).data,
   })
 
   const { data: locationOptions } = useQuery({
@@ -65,11 +75,12 @@ export default function UsersPage() {
   const hospitalList: Hospital[] = Array.isArray(hospitals) ? hospitals : hospitals?.data ?? []
 
   const create = useMutation({
-    mutationFn: async () => (await api.post('/users', form)).data,
+    mutationFn: async () => (await api.post('/users', { ...form, permissions: createPermissions })).data,
     onSuccess: () => {
       toast.success('User created.')
       setOpen(false)
       setForm({ ...emptyForm })
+      setCreatePermissions([])
       void qc.invalidateQueries({ queryKey: ['users'] })
     },
     onError: (e) => toast.error(apiError(e)),
@@ -88,6 +99,7 @@ export default function UsersPage() {
       is_active: u.is_active,
     })
     setEditLocationId(u.location_id ? String(u.location_id) : '')
+    setEditPermissions(u.permissions ?? [])
     const next: Record<number, HospitalAssignment> = {}
     for (const h of u.hospitals ?? []) {
       const role = hospitalRole(h)
@@ -112,6 +124,7 @@ export default function UsersPage() {
         role: editForm.role,
         is_active: editForm.is_active,
         location_id: editLocationId ? Number(editLocationId) : null,
+        permissions: editPermissions,
       }
       if (editForm.password) payload.password = editForm.password
       await api.put(`/users/${editing.id}`, payload)
@@ -140,6 +153,29 @@ export default function UsersPage() {
     },
     onError: (e) => toast.error(apiError(e)),
   })
+
+  const saveRolePermissions = useMutation({
+    mutationFn: async () => {
+      if (!roleEditingId) return
+      await api.put(`/users/roles/${roleEditingId}`, { permissions: rolePermissions })
+    },
+    onSuccess: () => {
+      toast.success('Role permissions updated.')
+      void qc.invalidateQueries({ queryKey: ['users', 'roles'] })
+      void qc.invalidateQueries({ queryKey: ['users'] })
+    },
+    onError: (e) => toast.error(apiError(e)),
+  })
+
+  function permissionsForRole(roleName: string): string[] {
+    return roles?.find((r) => r.name === roleName)?.permissions.map((p) => p.name) ?? []
+  }
+
+  function selectRoleForManagement(id: string) {
+    setRoleEditingId(id)
+    const role = roles?.find((r) => String(r.id) === id)
+    setRolePermissions(role?.permissions.map((p) => p.name) ?? [])
+  }
 
   function toggleAssignment(id: number, checked: boolean) {
     setAssignments((prev) => ({ ...prev, [id]: { role: prev[id]?.role ?? 'rep', checked } }))
@@ -171,6 +207,44 @@ export default function UsersPage() {
       <Card className="mb-4">
         <CardBody>
           <Input placeholder="Search by name or email…" value={q} onChange={(e) => setQ(e.target.value)} className="max-w-sm" />
+        </CardBody>
+      </Card>
+
+      <Card className="mb-4">
+        <CardBody>
+          <div className="mb-4 flex items-start gap-3">
+            <ShieldCheck className="mt-0.5 h-5 w-5 text-brand-600" />
+            <div>
+              <p className="font-semibold text-slate-800">Role access</p>
+              <p className="text-sm text-slate-500">Choose a role, then tick the actions everyone with that role may use.</p>
+            </div>
+          </div>
+          <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end">
+            <div className="w-full sm:max-w-xs">
+              <Field label="Role">
+                <Select value={roleEditingId} onChange={(e) => selectRoleForManagement(e.target.value)}>
+                  <option value="">Select role…</option>
+                  {roles?.map((r) => <option key={r.id} value={r.id}>{humanize(r.name)}</option>)}
+                </Select>
+              </Field>
+            </div>
+            <Button
+              type="button"
+              loading={saveRolePermissions.isPending}
+              disabled={!roleEditingId || roles?.find((r) => String(r.id) === roleEditingId)?.name === 'super_admin'}
+              onClick={() => saveRolePermissions.mutate()}
+            >
+              Save role access
+            </Button>
+          </div>
+          {roleEditingId && (
+            <PermissionChecklist
+              permissions={permissions}
+              selected={rolePermissions}
+              onChange={setRolePermissions}
+              disabled={roles?.find((r) => String(r.id) === roleEditingId)?.name === 'super_admin'}
+            />
+          )}
         </CardBody>
       </Card>
 
@@ -209,11 +283,19 @@ export default function UsersPage() {
               </Select>
             </Field>
             <Field label="Role" required>
-              <Select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} required>
+              <Select value={form.role} onChange={(e) => {
+                setForm({ ...form, role: e.target.value })
+                setCreatePermissions(permissionsForRole(e.target.value))
+              }} required>
                 <option value="">Select role…</option>
                 {roles?.map((r) => <option key={r.id} value={r.name}>{humanize(r.name)}</option>)}
               </Select>
             </Field>
+          </div>
+          <div>
+            <p className="mb-1 text-sm font-medium text-slate-700">User access</p>
+            <PermissionChecklist permissions={permissions} selected={createPermissions} onChange={setCreatePermissions} />
+            <p className="mt-1 text-xs text-slate-400">These ticks are this user's exact access, independent of other users in the role.</p>
           </div>
           <label className="flex items-center gap-2 text-sm text-slate-700">
             <input type="checkbox" checked={form.is_active} onChange={(e) => setForm({ ...form, is_active: e.target.checked })} />
@@ -248,11 +330,19 @@ export default function UsersPage() {
               </Select>
             </Field>
             <Field label="Role" required>
-              <Select value={editForm.role} onChange={(e) => setEditForm({ ...editForm, role: e.target.value })} required>
+              <Select value={editForm.role} onChange={(e) => {
+                setEditForm({ ...editForm, role: e.target.value })
+                setEditPermissions(permissionsForRole(e.target.value))
+              }} required>
                 <option value="">Select role…</option>
                 {roles?.map((r) => <option key={r.id} value={r.name}>{humanize(r.name)}</option>)}
               </Select>
             </Field>
+          </div>
+          <div>
+            <p className="mb-1 text-sm font-medium text-slate-700">User access</p>
+            <PermissionChecklist permissions={permissions} selected={editPermissions} onChange={setEditPermissions} />
+            <p className="mt-1 text-xs text-slate-400">Untick anything this user must not see or use. Tick only Inventory View and Transfer actions for an inventory-and-transfer-only user.</p>
           </div>
           <Field label="Linked location (My Inventory)" hint="The boot/office whose stock this user sees and owns.">
             <Select value={editLocationId} onChange={(e) => setEditLocationId(e.target.value)}>
@@ -327,5 +417,76 @@ export default function UsersPage() {
         </form>
       </Modal>
     </>
+  )
+}
+
+const permissionGroupLabels: Record<string, string> = {
+  inventory: 'Inventory',
+  transfer: 'Transfers',
+  stock_count: 'Stock counts',
+  hospital: 'Hospitals',
+  doctor: 'Doctors & preference cards',
+  location: 'Locations',
+  report: 'Reports',
+  pastel: 'Pastel export',
+  user: 'Users',
+  role: 'Roles',
+  config: 'Configuration',
+  audit: 'Audit log',
+}
+
+const permissionLabels: Record<string, string> = {
+  'inventory.view': 'View My Inventory',
+  'inventory.manage': 'Manage Stock Catalog',
+  'transfer.view': 'View Transfers',
+  'transfer.create': 'Create Transfers',
+  'transfer.approve': 'Approve Transfers',
+  'transfer.override': 'Override Transfers',
+  'transfer.review': 'Final Transfer Review',
+  'stock_count.capture': 'Capture Counts',
+  'stock_count.review': 'Review Counts',
+}
+
+function PermissionChecklist({ permissions, selected, onChange, disabled = false }: {
+  permissions: string[]
+  selected: string[]
+  onChange: (next: string[]) => void
+  disabled?: boolean
+}) {
+  const grouped = permissions.reduce<Record<string, string[]>>((acc, permission) => {
+    const group = permission.split('.').slice(0, -1).join('.')
+    ;(acc[group] ??= []).push(permission)
+    return acc
+  }, {})
+
+  function toggle(permission: string, checked: boolean) {
+    onChange(checked
+      ? [...new Set([...selected, permission])]
+      : selected.filter((p) => p !== permission))
+  }
+
+  return (
+    <div className="grid gap-3 rounded-lg border border-slate-200 bg-slate-50/50 p-3 sm:grid-cols-2">
+      {Object.entries(grouped).map(([group, items]) => (
+        <fieldset key={group} className="rounded-md bg-white p-3 shadow-sm ring-1 ring-slate-100">
+          <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+            {permissionGroupLabels[group] ?? humanize(group)}
+          </legend>
+          <div className="mt-1 space-y-2">
+            {items.map((permission) => (
+              <label key={permission} className="flex items-center gap-2 text-sm text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={selected.includes(permission)}
+                  disabled={disabled}
+                  onChange={(e) => toggle(permission, e.target.checked)}
+                />
+                {permissionLabels[permission] ?? humanize(permission.split('.').at(-1))}
+              </label>
+            ))}
+          </div>
+        </fieldset>
+      ))}
+    </div>
   )
 }

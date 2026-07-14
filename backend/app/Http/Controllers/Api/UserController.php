@@ -9,6 +9,8 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\Rule;
 use Spatie\Permission\Models\Role;
+use Spatie\Permission\Models\Permission;
+use Spatie\Permission\PermissionRegistrar;
 
 class UserController extends Controller
 {
@@ -47,11 +49,18 @@ class UserController extends Controller
             'location_id' => ['nullable', 'exists:locations,id'],
             'role'       => ['required', Rule::exists('roles', 'name')],
             'is_active'  => ['boolean'],
+            'permissions' => ['nullable', 'array'],
+            'permissions.*' => ['string', Rule::exists('permissions', 'name')],
         ]);
 
+        if (array_key_exists('permissions', $data)) {
+            $this->authorize('manageRoles', User::class);
+        }
+
         $user = User::create([
-            ...collect($data)->except(['role', 'password'])->all(),
+            ...collect($data)->except(['role', 'password', 'permissions'])->all(),
             'password' => Hash::make($data['password']),
+            'permission_overrides' => $data['permissions'] ?? null,
         ]);
         $user->assignRole($data['role']);
 
@@ -72,10 +81,17 @@ class UserController extends Controller
             'location_id' => ['nullable', 'exists:locations,id'],
             'is_active'  => ['boolean'],
             'role'       => ['sometimes', Rule::exists('roles', 'name')],
+            'permissions' => ['nullable', 'array'],
+            'permissions.*' => ['string', Rule::exists('permissions', 'name')],
         ]);
 
-        $user->update(collect($data)->except(['role', 'password'])
+        if (array_key_exists('permissions', $data)) {
+            $this->authorize('manageRoles', User::class);
+        }
+
+        $user->update(collect($data)->except(['role', 'password', 'permissions'])
             ->when(! empty($data['password']), fn ($c) => $c->put('password', Hash::make($data['password'])))
+            ->when(array_key_exists('permissions', $data), fn ($c) => $c->put('permission_overrides', $data['permissions']))
             ->all());
 
         if (isset($data['role'])) {
@@ -122,5 +138,36 @@ class UserController extends Controller
         $this->authorize('manageRoles', User::class);
 
         return response()->json(Role::with('permissions:id,name')->get(['id', 'name']));
+    }
+
+    /** Every permission available to role/user checkbox controls. */
+    public function permissions()
+    {
+        $this->authorize('manageRoles', User::class);
+
+        return response()->json(Permission::orderBy('name')->pluck('name'));
+    }
+
+    /** Replace the selected role's permissions with the checked set. */
+    public function updateRolePermissions(Request $request, Role $role)
+    {
+        $this->authorize('manageRoles', User::class);
+
+        if ($role->name === \App\Enums\UserRole::SuperAdmin->value) {
+            return response()->json(['message' => 'Super Admin always has every permission.'], 422);
+        }
+
+        $data = $request->validate([
+            'permissions' => ['required', 'array'],
+            'permissions.*' => ['string', Rule::exists('permissions', 'name')],
+        ]);
+
+        $role->syncPermissions($data['permissions']);
+        app(PermissionRegistrar::class)->forgetCachedPermissions();
+
+        return response()->json([
+            'message' => 'Role permissions updated.',
+            'role' => $role->fresh('permissions:id,name'),
+        ]);
     }
 }

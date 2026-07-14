@@ -31,4 +31,5 @@ class StockItemPolicy
     {
         return $user->can('inventory.manage');
     }
+
 }

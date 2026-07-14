@@ -51,6 +51,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // -- Stock catalog + device units ----------------------------------------
     Route::post('stock-items/{stockItem}/units', [StockItemController::class, 'receiveUnits'])->name('stock-items.receive');
+    Route::post('stock-items/{stockItem}/restore', [StockItemController::class, 'restore'])->name('stock-items.restore');
     Route::apiResource('stock-items', StockItemController::class);
     Route::put('device-units/{deviceUnit}', [DeviceUnitController::class, 'update'])->name('device-units.update');
     Route::delete('device-units/{deviceUnit}', [DeviceUnitController::class, 'destroy'])->name('device-units.destroy');
@@ -120,6 +121,8 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // -- User & role management (super admin) ------------------------------
     Route::get('users/roles', [UserController::class, 'roles'])->name('users.roles');
+    Route::put('users/roles/{role}', [UserController::class, 'updateRolePermissions'])->name('users.roles.update');
+    Route::get('users/permissions', [UserController::class, 'permissions'])->name('users.permissions');
     Route::post('users/{user}/hospitals', [UserController::class, 'syncHospitals'])->name('users.hospitals');
     Route::apiResource('users', UserController::class);
 

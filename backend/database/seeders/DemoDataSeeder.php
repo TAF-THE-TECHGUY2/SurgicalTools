@@ -16,7 +16,7 @@ use Illuminate\Support\Facades\Hash;
  * Seeds the demo world from the functional spec:
  *   Locations: Zamokuhle Hospital · Mike Boot · Josh Boot · JHB Office · Netcare Montana
  *   Users: super, admin, Mike (Mike Boot), Josh (Josh Boot)
- *   Stock: Trochar / Guide Wire / Mesh device units with serials, lots, expiries.
+ *   Stock: Guide Wire device units with serials, lots and expiries.
  * Idempotent — safe to re-run.
  */
 class DemoDataSeeder extends Seeder
@@ -86,61 +86,32 @@ class DemoDataSeeder extends Seeder
         $super->update(['location_id' => $locations['JHB Office']->id]);
 
         // -- Stock catalog -----------------------------------------------------
-        $trochar = StockItem::firstOrCreate(
-            ['catalogue_number' => 'TRO-12'],
-            ['name' => 'Trochar', 'item_code' => 'TR', 'uom' => 'each', 'unit_price' => 850, 'min_threshold' => 5],
-        );
         $guideWire = StockItem::firstOrCreate(
             ['catalogue_number' => 'GW-035'],
             ['name' => 'Guide Wire', 'item_code' => 'GW', 'uom' => 'each', 'unit_price' => 320, 'min_threshold' => 5],
         );
-        $mesh = StockItem::firstOrCreate(
-            ['catalogue_number' => 'MESH-15'],
-            ['name' => 'Mesh', 'item_code' => 'ME', 'uom' => 'each', 'unit_price' => 3200, 'min_threshold' => 4],
-        );
 
         // -- Device units (serial / lot / expiry per the spec example) --------
-        // Josh Boot — the spec's worked example.
-        $this->unit($trochar, $locations['Josh Boot'], 'TR001', 'LOT123', '2027-12-01');
-        $this->unit($trochar, $locations['Josh Boot'], 'TR002', 'LOT124', '2028-02-01');
-        $this->unit($trochar, $locations['Josh Boot'], 'TR003', 'LOT130', '2027-07-01');
         foreach (range(1, 4) as $i) {
             $this->unit($guideWire, $locations['Josh Boot'], sprintf('GWJ%03d', $i), 'LOT210', '2028-05-01');
         }
 
-        // Mike Boot.
-        $this->unit($trochar, $locations['Mike Boot'], 'TR010', 'LOT131', '2027-09-01');
-        $this->unit($trochar, $locations['Mike Boot'], 'TR011', 'LOT131', '2027-09-01');
-        foreach (range(1, 3) as $i) {
-            $this->unit($mesh, $locations['Mike Boot'], sprintf('MEM%03d', $i), 'LOT501', '2028-01-01');
-        }
-
         // JHB Office — main store.
-        foreach (range(20, 29) as $i) {
-            $this->unit($trochar, $locations['JHB Office'], "TR0{$i}", 'LOT140', '2028-06-01');
-        }
         foreach (range(1, 5) as $i) {
             $this->unit($guideWire, $locations['JHB Office'], sprintf('GWO%03d', $i), 'LOT211', '2028-08-01');
-        }
-        foreach (range(1, 12) as $i) {
-            $this->unit($mesh, $locations['JHB Office'], sprintf('MEO%03d', $i), 'LOT502', '2028-03-01');
         }
 
         // A couple of near-expiry units to exercise the alerts.
         $this->unit($guideWire, $locations['JHB Office'], 'GWEXP1', 'LOT-EXP', now()->addDays(25)->toDateString());
         $this->unit($guideWire, $locations['JHB Office'], 'GWEXP2', 'LOT-EXP', now()->addDays(25)->toDateString());
 
-        // Hospital consignment examples.
-        $this->unit($mesh, $locations['Zamokuhle Hospital'], 'MEZ001', 'LOT503', '2028-04-01');
-        $this->unit($mesh, $locations['Netcare Montana'], 'MEN001', 'LOT503', '2028-04-01');
-
         // -- Doctors + preference card (unchanged modules) ---------------------
         $drJones = Doctor::firstOrCreate(
             ['name' => 'Dr A. Jones'],
             ['age' => 52, 'specialty' => 'general_surgeon',
                 'operating_days' => ['monday', 'wednesday', 'friday'],
-                'equipment_used' => ['Trochar 12mm', 'Mesh 15x15'],
-                'procedure_preferences' => 'Prefers 12mm trochars.'],
+                'equipment_used' => ['Guide Wire'],
+                'procedure_preferences' => null],
         );
         $drJones->hospitals()->syncWithoutDetaching([$zamokuhle->id, $montana->id]);
 
@@ -150,8 +121,7 @@ class DemoDataSeeder extends Seeder
         );
         if ($card->items()->count() === 0) {
             $card->items()->createMany([
-                ['ref_code' => 'TRO-12', 'description' => 'Trochar', 'preferred_size' => '12mm', 'quantity' => 2],
-                ['ref_code' => 'MESH-15', 'description' => 'Mesh', 'preferred_size' => '15x15cm', 'quantity' => 1],
+                ['ref_code' => 'GW-035', 'description' => 'Guide Wire', 'preferred_size' => null, 'quantity' => 1],
             ]);
         }
 

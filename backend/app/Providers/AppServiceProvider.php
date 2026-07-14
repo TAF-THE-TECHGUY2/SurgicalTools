@@ -18,7 +18,15 @@ class AppServiceProvider extends ServiceProvider
     {
         // Super Admins implicitly pass every authorization check.
         Gate::before(function (User $user, string $ability) {
-            return $user->hasRole(UserRole::SuperAdmin->value) ? true : null;
+            if ($user->hasRole(UserRole::SuperAdmin->value)) {
+                return true;
+            }
+
+            if ($user->permission_overrides !== null && in_array($ability, User::SYSTEM_PERMISSIONS, true)) {
+                return in_array($ability, $user->permission_overrides, true);
+            }
+
+            return null;
         });
     }
 }

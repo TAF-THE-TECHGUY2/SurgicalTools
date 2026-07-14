@@ -44,6 +44,7 @@ export interface StockItem {
   is_active: boolean
   units_count?: number
   units?: DeviceUnit[]
+  deleted_at?: string | null
 }
 
 export type DeviceUnitStatus =

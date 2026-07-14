@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Contracts\Auth\Access\Gate as GateContract;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
@@ -17,6 +18,17 @@ class User extends Authenticatable
 {
     use HasApiTokens, HasFactory, HasRoles, LogsActivity, Notifiable, SoftDeletes;
 
+    public const SYSTEM_PERMISSIONS = [
+        'inventory.view', 'inventory.manage',
+        'transfer.view', 'transfer.create', 'transfer.approve', 'transfer.override', 'transfer.review',
+        'stock_count.capture', 'stock_count.review',
+        'hospital.view', 'hospital.manage',
+        'doctor.view', 'doctor.manage',
+        'location.manage',
+        'report.view', 'pastel.export',
+        'user.manage', 'role.manage', 'config.manage', 'audit.view',
+    ];
+
     protected $fillable = [
         'name',
         'email',
@@ -26,6 +38,7 @@ class User extends Authenticatable
         'staff_type',
         'location_id',
         'is_active',
+        'permission_overrides',
     ];
 
     protected $hidden = [
@@ -39,13 +52,14 @@ class User extends Authenticatable
             'email_verified_at' => 'datetime',
             'password'          => 'hashed',
             'is_active'         => 'boolean',
+            'permission_overrides' => 'array',
         ];
     }
 
     public function getActivitylogOptions(): LogOptions
     {
         return LogOptions::defaults()
-            ->logOnly(['name', 'email', 'phone', 'region', 'staff_type', 'is_active'])
+            ->logOnly(['name', 'email', 'phone', 'region', 'staff_type', 'is_active', 'permission_overrides'])
             ->logOnlyDirty()
             ->dontLogEmptyChanges();
     }
@@ -98,6 +112,36 @@ class User extends Authenticatable
             \App\Enums\UserRole::Admin->value,
             \App\Enums\UserRole::SuperAdmin->value,
         ]);
+    }
+
+    /** Permissions exposed to the UI and enforced by Gate::before. */
+    public function effectivePermissionNames(): array
+    {
+        if ($this->permission_overrides !== null) {
+            return array_values(array_unique($this->permission_overrides));
+        }
+
+        return $this->getAllPermissions()->pluck('name')->values()->all();
+    }
+
+    /**
+     * Enforce a user's checked permission list before falling back to their
+     * role permissions. This makes unticking an inherited permission a real
+     * denial, not merely the absence of an additional direct permission.
+     */
+    public function can($abilities, $arguments = []): bool
+    {
+        if ($this->isSuperAdmin()) {
+            return true;
+        }
+
+        if (is_string($abilities)
+            && $this->permission_overrides !== null
+            && in_array($abilities, self::SYSTEM_PERMISSIONS, true)) {
+            return in_array($abilities, $this->permission_overrides, true);
+        }
+
+        return app(GateContract::class)->forUser($this)->check($abilities, $arguments);
     }
 
     /** IDs of hospitals this user may approve requests for. */

@@ -3,6 +3,7 @@
 namespace Database\Seeders;
 
 use App\Enums\UserRole;
+use App\Models\User;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\App;
 use Spatie\Permission\Models\Permission;
@@ -12,28 +13,11 @@ use Spatie\Permission\PermissionRegistrar;
 class RolePermissionSeeder extends Seeder
 {
     /** Every permission in the system, grouped for readability. */
-    public const PERMISSIONS = [
-        // Inventory
-        'inventory.view', 'inventory.manage',
-        // Transfers
-        'transfer.view', 'transfer.create', 'transfer.approve', 'transfer.override', 'transfer.review',
-        // Stock counts
-        'stock_count.capture', 'stock_count.review',
-        // Master data
-        'hospital.view', 'hospital.manage',
-        'doctor.view', 'doctor.manage',
-        'location.manage',
-        // Ops
-        'report.view', 'pastel.export',
-        // Administration
-        'user.manage', 'role.manage', 'config.manage', 'audit.view',
-    ];
-
     public function run(): void
     {
         app(PermissionRegistrar::class)->forgetCachedPermissions();
 
-        foreach (self::PERMISSIONS as $name) {
+        foreach (User::SYSTEM_PERMISSIONS as $name) {
             Permission::firstOrCreate(['name' => $name, 'guard_name' => 'web']);
         }
 

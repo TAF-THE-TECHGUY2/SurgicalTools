@@ -47,11 +47,10 @@ class ApiSmokeTest extends TestCase
 
         $this->assertSame('Josh Boot', $res->json('location.name'));
         $names = collect($res->json('items'))->pluck('name');
-        $this->assertTrue($names->contains('Trochar'));
-        // The spec example: Josh holds 3 trochars, each expandable to units.
-        $trochar = collect($res->json('items'))->firstWhere('name', 'Trochar');
-        $this->assertSame(3, $trochar['quantity']);
-        $this->assertCount(3, $trochar['units']);
+        $this->assertTrue($names->contains('Guide Wire'));
+        $guideWire = collect($res->json('items'))->firstWhere('name', 'Guide Wire');
+        $this->assertSame(4, $guideWire['quantity']);
+        $this->assertCount(4, $guideWire['units']);
     }
 
     public function test_locations_list_contains_the_five_entities(): void
@@ -66,17 +65,24 @@ class ApiSmokeTest extends TestCase
         }
     }
 
+    public function test_removed_demo_products_are_not_seeded(): void
+    {
+        $this->assertDatabaseMissing('stock_items', ['name' => 'Trochar']);
+        $this->assertDatabaseMissing('stock_items', ['name' => 'Mesh']);
+        $this->assertDatabaseHas('stock_items', ['name' => 'Guide Wire']);
+    }
+
     public function test_location_inventory_supports_search(): void
     {
         $user = User::where('email', 'admin@surgical.test')->first();
         $office = \App\Models\Location::where('name', 'JHB Office')->first();
 
         $res = $this->actingAs($user, 'sanctum')
-            ->getJson("/api/locations/{$office->id}/inventory?q=Trochar")->assertOk();
+            ->getJson("/api/locations/{$office->id}/inventory?q=Guide")->assertOk();
 
         $items = collect($res->json('items'));
         $this->assertCount(1, $items);
-        $this->assertSame('Trochar', $items[0]['name']);
+        $this->assertSame('Guide Wire', $items[0]['name']);
     }
 
     public function test_general_user_cannot_manage_locations_or_users(): void
@@ -96,7 +102,7 @@ class ApiSmokeTest extends TestCase
         $this->actingAs($user, 'sanctum')->getJson('/api/dashboard')
             ->assertOk()->assertJsonStructure(['inventory', 'transfers', 'stock_counts']);
 
-        $this->actingAs($user, 'sanctum')->getJson('/api/search?q=Trochar')
-            ->assertOk()->assertJsonPath('query', 'Trochar');
+        $this->actingAs($user, 'sanctum')->getJson('/api/search?q=Guide')
+            ->assertOk()->assertJsonPath('query', 'Guide');
     }
 }

@@ -9,6 +9,7 @@ use App\Models\Location;
 use App\Models\StockItem;
 use App\Services\InventoryService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class StockItemController extends Controller
 {
@@ -18,10 +19,13 @@ class StockItemController extends Controller
     {
         abort_unless($request->user()->can('inventory.view'), 403);
 
+        $includeArchived = $request->boolean('include_archived');
+
         $items = StockItem::query()
+            ->when($includeArchived, fn ($q) => $q->withTrashed())
             ->search($request->query('q'))
-            ->withCount('units')
-            ->when(! $request->boolean('include_inactive'), fn ($q) => $q->where('is_active', true))
+            ->withCount(['units' => fn ($q) => $includeArchived ? $q->withTrashed() : $q])
+            ->when(! $includeArchived && ! $request->boolean('include_inactive'), fn ($q) => $q->where('is_active', true))
             ->orderBy('name')
             ->paginate($request->integer('per_page', 25));
 
@@ -58,19 +62,55 @@ class StockItemController extends Controller
         return new StockItemResource($stockItem->fresh()->loadCount('units'));
     }
 
-    public function destroy(StockItem $stockItem)
+    public function destroy(Request $request, StockItem $stockItem)
     {
         $this->authorize('delete', $stockItem);
 
-        if ($stockItem->units()->whereIn('status', ['available', 'pending_transfer'])->exists()) {
+        if ($stockItem->units()->where('status', 'pending_transfer')->exists()) {
             return response()->json([
-                'message' => 'This item still has devices on hand. Archive or transfer them first.',
+                'message' => 'This item has devices reserved in a pending transfer. Approve or reject the transfer first.',
             ], 422);
         }
 
-        $stockItem->delete();
+        $unitCount = $stockItem->units()->count();
 
-        return response()->json(['message' => 'Stock item archived.']);
+        DB::transaction(function () use ($request, $stockItem, $unitCount) {
+            activity('inventory')
+                ->causedBy($request->user())
+                ->performedOn($stockItem)
+                ->withProperties(['units_archived' => $unitCount, 'recoverable' => true])
+                ->log("Archived stock item: {$stockItem->name}");
+
+            $stockItem->units()->delete();
+            $stockItem->update(['is_active' => false]);
+            $stockItem->delete();
+        });
+
+        return response()->json([
+            'message' => 'Stock item archived. It can be restored at any time.',
+            'units_archived' => $unitCount,
+        ]);
+    }
+
+    /** Restore a soft-deleted catalogue item and all of its device records. */
+    public function restore(Request $request, int $stockItem)
+    {
+        $item = StockItem::onlyTrashed()->findOrFail($stockItem);
+        $this->authorize('update', $item);
+
+        DB::transaction(function () use ($request, $item) {
+            $item->restore();
+            $item->update(['is_active' => true]);
+            $item->units()->withTrashed()->restore();
+
+            activity('inventory')
+                ->causedBy($request->user())
+                ->performedOn($item)
+                ->withProperties(['recoverable' => true])
+                ->log("Restored stock item: {$item->name}");
+        });
+
+        return new StockItemResource($item->fresh()->loadCount('units'));
     }
 
     /** Receive new devices (serial/lot/expiry each) into a location. */

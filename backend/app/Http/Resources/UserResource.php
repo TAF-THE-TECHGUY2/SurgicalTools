@@ -21,8 +21,8 @@ class UserResource extends JsonResource
             'is_active'   => $this->is_active,
             'roles'       => $this->whenLoaded('roles', fn () => $this->roles->pluck('name')),
             'permissions' => $this->when(
-                $request->routeIs('auth.me') || $request->routeIs('users.*'),
-                fn () => $this->getAllPermissions()->pluck('name'),
+                $request->routeIs('auth.login') || $request->routeIs('auth.me') || $request->routeIs('users.*'),
+                fn () => $this->effectivePermissionNames(),
             ),
             'hospitals'   => HospitalResource::collection($this->whenLoaded('hospitals')),
             'created_at'  => $this->created_at,

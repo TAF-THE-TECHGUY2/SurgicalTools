@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  ChevronDown, ChevronRight, PackagePlus, PackageSearch, Pencil, Plus, Search, Trash2,
+  Archive, ChevronDown, ChevronRight, PackagePlus, PackageSearch, Pencil, Plus, RotateCcw, Search, Trash2,
 } from 'lucide-react'
 import { api, apiError } from '@/lib/api'
 import { Can } from '@/auth/Can'
@@ -25,11 +25,14 @@ export default function StockItemsPage() {
   const [formOpen, setFormOpen] = useState(false)
   const [editing, setEditing] = useState<StockItem | null>(null)
   const [receiving, setReceiving] = useState<StockItem | null>(null)
+  const [showArchived, setShowArchived] = useState(false)
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ['stock-items', { q, page }],
+    queryKey: ['stock-items', { q, page, showArchived }],
     queryFn: async () =>
-      (await api.get<Paginated<StockItem>>('/stock-items', { params: { q: q || undefined, page } })).data,
+      (await api.get<Paginated<StockItem>>('/stock-items', {
+        params: { q: q || undefined, page, include_archived: showArchived || undefined },
+      })).data,
   })
 
   const pageMeta = data?.meta
@@ -57,10 +60,16 @@ export default function StockItemsPage() {
 
       <Card className="mb-4">
         <CardBody>
-          <div className="relative max-w-md">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <Input className="pl-9" placeholder="Search name, catalogue number, REF…" value={q}
-              onChange={(e) => { setQ(e.target.value); setPage(1) }} />
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+            <div className="relative max-w-md flex-1">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <Input className="pl-9" placeholder="Search name, catalogue number, REF…" value={q}
+                onChange={(e) => { setQ(e.target.value); setPage(1) }} />
+            </div>
+            <label className="flex items-center gap-2 text-sm text-slate-600">
+              <input type="checkbox" checked={showArchived} onChange={(e) => { setShowArchived(e.target.checked); setPage(1) }} />
+              Show archived
+            </label>
           </div>
         </CardBody>
       </Card>
@@ -143,11 +152,13 @@ function StockItemCard({ item, onEdit, onReceive, onChanged }: {
   const [open, setOpen] = useState(false)
   const [archiving, setArchiving] = useState<DeviceUnit | null>(null)
   const [reason, setReason] = useState('')
+  const [archivingItem, setArchivingItem] = useState(false)
+  const isArchived = Boolean(item.deleted_at)
 
   const { data: detail, isLoading, refetch } = useQuery({
     queryKey: ['stock-items', item.id, 'detail'],
     queryFn: async () => (await api.get<{ data: StockItem }>(`/stock-items/${item.id}`)).data.data,
-    enabled: open,
+    enabled: open && !isArchived,
   })
 
   const archive = useMutation({
@@ -163,27 +174,58 @@ function StockItemCard({ item, onEdit, onReceive, onChanged }: {
     onError: (e) => toast.error(apiError(e)),
   })
 
+  const archiveItem = useMutation({
+    mutationFn: async () => (await api.delete(`/stock-items/${item.id}`)).data,
+    onSuccess: () => {
+      toast.success(`${item.name} archived. It can be restored later.`)
+      setArchivingItem(false)
+      onChanged()
+    },
+    onError: (e) => toast.error(apiError(e)),
+  })
+
+  const restoreItem = useMutation({
+    mutationFn: async () => (await api.post(`/stock-items/${item.id}/restore`)).data,
+    onSuccess: () => {
+      toast.success(`${item.name} restored.`)
+      onChanged()
+    },
+    onError: (e) => toast.error(apiError(e)),
+  })
+
   return (
     <Card>
       <div className="flex items-center justify-between gap-2 px-4 py-3">
-        <button onClick={() => setOpen((o) => !o)} className="flex flex-1 items-center gap-2 text-left">
+        <button disabled={isArchived} onClick={() => setOpen((o) => !o)} className="flex flex-1 items-center gap-2 text-left disabled:cursor-default">
           {open ? <ChevronDown className="h-4 w-4 text-slate-400" /> : <ChevronRight className="h-4 w-4 text-slate-400" />}
           <span className="font-medium text-slate-800">{item.name}</span>
           <span className="hidden text-xs text-slate-400 sm:inline">
             Cat No {item.catalogue_number ?? '—'} · REF {item.item_code ?? '—'}
           </span>
-          {!item.is_active && <Badge tone="gray">Inactive</Badge>}
+          {isArchived && <Badge tone="gray">Archived</Badge>}
+          {!isArchived && !item.is_active && <Badge tone="gray">Inactive</Badge>}
         </button>
         <div className="flex items-center gap-2">
-          <Badge tone="teal">{item.units_count ?? 0} unit(s)</Badge>
-          <Can permission="inventory.manage">
-            <Button variant="outline" size="sm" onClick={onReceive}>
-              <PackagePlus className="h-4 w-4" /> Receive
-            </Button>
-            <Button variant="ghost" size="sm" onClick={onEdit}>
-              <Pencil className="h-4 w-4" />
-            </Button>
-          </Can>
+          <Badge tone={isArchived ? 'gray' : 'teal'}>{item.units_count ?? 0} unit(s)</Badge>
+          {isArchived ? (
+            <Can permission="inventory.manage">
+              <Button variant="outline" size="sm" loading={restoreItem.isPending} onClick={() => restoreItem.mutate()}>
+                <RotateCcw className="h-4 w-4" /> Restore
+              </Button>
+            </Can>
+          ) : (
+            <Can permission="inventory.manage">
+              <Button variant="outline" size="sm" onClick={onReceive}>
+                <PackagePlus className="h-4 w-4" /> Receive
+              </Button>
+              <Button variant="ghost" size="sm" onClick={onEdit}>
+                <Pencil className="h-4 w-4" />
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => setArchivingItem(true)} aria-label={`Archive ${item.name}`}>
+                <Archive className="h-4 w-4 text-amber-600" />
+              </Button>
+            </Can>
+          )}
         </div>
       </div>
 
@@ -253,6 +295,23 @@ function StockItemCard({ item, onEdit, onReceive, onChanged }: {
           </Button>
         </div>
       </Modal>
+
+      <Modal open={archivingItem} onClose={() => setArchivingItem(false)} title="Archive stock item?" size="sm">
+        <p className="text-sm text-slate-600">
+          <span className="font-semibold">{item.name}</span> and all its devices will disappear from normal inventory.
+          Nothing is permanently deleted, and the item can be restored from “Show archived”.
+        </p>
+        <div className="mt-4 flex justify-end gap-2">
+          <Button variant="outline" onClick={() => setArchivingItem(false)}>Cancel</Button>
+          <Button
+            variant="danger"
+            loading={archiveItem.isPending}
+            onClick={() => archiveItem.mutate()}
+          >
+            Archive item
+          </Button>
+        </div>
+      </Modal>
     </Card>
   )
 }
@@ -269,7 +328,7 @@ function ItemFormModal({ open, item, onClose, onSaved }: {
 }) {
   const toast = useToast()
 
-  const blank = { name: '', catalogue_number: '', item_code: '', description: '', uom: '', unit_price: '', min_threshold: '' }
+  const blank = { name: '', item_code: '', description: '', uom: '', unit_price: '', min_threshold: '' }
   const [form, setForm] = useState(blank)
 
   // Create mode: optionally receive the first batch straight into a location
@@ -289,7 +348,6 @@ function ItemFormModal({ open, item, onClose, onSaved }: {
     setSyncKey(currentKey)
     setForm(item ? {
       name: item.name,
-      catalogue_number: item.catalogue_number ?? '',
       item_code: item.item_code ?? '',
       description: item.description ?? '',
       uom: item.uom ?? '',
@@ -306,7 +364,6 @@ function ItemFormModal({ open, item, onClose, onSaved }: {
     mutationFn: async () => {
       const payload = {
         name: form.name,
-        catalogue_number: form.catalogue_number || null,
         item_code: form.item_code || null,
         description: form.description || null,
         uom: form.uom || null,
@@ -346,9 +403,12 @@ function ItemFormModal({ open, item, onClose, onSaved }: {
     <Modal open={open} onClose={onClose} title={item ? 'Edit stock item' : 'New stock item'} size="lg">
       <form className="grid gap-4 sm:grid-cols-2" onSubmit={(e) => { e.preventDefault(); mutation.mutate() }}>
         <Field label="Name" required><Input value={form.name} onChange={set('name')} required /></Field>
-        <Field label="Catalogue number" hint="The manufacturer's catalogue number.">
-          <Input value={form.catalogue_number} onChange={set('catalogue_number')} />
-        </Field>
+        {!item && (
+          <Field label="Lot number" hint="Applied to the initial stock batch below.">
+            <Input value={initialStock.lot_number}
+              onChange={(e) => setInitialStock((p) => ({ ...p, lot_number: e.target.value }))} />
+          </Field>
+        )}
         <Field label="REF" hint="Your internal reference code.">
           <Input value={form.item_code} onChange={set('item_code')} />
         </Field>
@@ -378,10 +438,6 @@ function ItemFormModal({ open, item, onClose, onSaved }: {
                     <option key={l.id} value={l.id}>{l.name}{l.owner ? ` — ${l.owner.name}` : ''}</option>
                   ))}
                 </Select>
-              </Field>
-              <Field label="Lot number">
-                <Input value={initialStock.lot_number}
-                  onChange={(e) => setInitialStock((p) => ({ ...p, lot_number: e.target.value }))} />
               </Field>
               <Field label="Expiry date">
                 <Input type="date" value={initialStock.expiry_date}
