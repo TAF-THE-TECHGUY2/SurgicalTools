@@ -160,6 +160,33 @@ describe('useBarcodeScanner', () => {
     expect(stopped).toBe(1)
   })
 
+  /**
+   * On an insecure origin the browser hides mediaDevices entirely, which looks
+   * identical to a missing camera. Saying so is the difference between "enable
+   * HTTPS" and someone checking the phone's hardware.
+   */
+  it('blames the insecure origin, not the hardware, when served over HTTP', async () => {
+    Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: undefined })
+    Object.defineProperty(window, 'isSecureContext', { configurable: true, value: false })
+
+    const hook = renderHook(() => useBarcodeScanner({ onDecode: vi.fn() }))
+    await act(async () => { await hook.result.current.start() })
+
+    expect(hook.result.current.status).toBe('error')
+    expect(hook.result.current.error).toMatch(/HTTPS/i)
+    expect(hook.result.current.error).not.toMatch(/no camera/i)
+  })
+
+  it('still reports a genuinely missing camera on a secure origin', async () => {
+    Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: undefined })
+    Object.defineProperty(window, 'isSecureContext', { configurable: true, value: true })
+
+    const hook = renderHook(() => useBarcodeScanner({ onDecode: vi.fn() }))
+    await act(async () => { await hook.result.current.start() })
+
+    expect(hook.result.current.error).toMatch(/no camera/i)
+  })
+
   it('explains a blocked camera instead of failing silently', async () => {
     const denied = Object.assign(new Error('denied'), { name: 'NotAllowedError' })
     Object.defineProperty(navigator, 'mediaDevices', {

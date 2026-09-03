@@ -128,7 +128,17 @@ export function useBarcodeScanner({ onDecode, paused = false }: UseBarcodeScanne
     setStatus('starting')
 
     if (!navigator.mediaDevices?.getUserMedia) {
-      setError('This device has no camera available to the browser.')
+      // On an insecure origin the browser does not expose mediaDevices at
+      // all, so this is indistinguishable from "no camera" unless we check
+      // for the real cause. Naming it saves someone hunting for a hardware
+      // fault that isn't there.
+      setError(
+        window.isSecureContext === false
+          ? 'The camera needs a secure connection. This page is served over '
+            + 'plain HTTP, and browsers only allow camera access over HTTPS. '
+            + 'Ask IT to enable HTTPS on this address.'
+          : 'This device has no camera available to the browser.',
+      )
       setStatus('error')
       return
     }
