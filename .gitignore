@@ -24,6 +24,17 @@
 /frontend/dev-dist/
 /frontend/*.local
 
+# Deployment secrets. deploy.sh generates the repo-root .env ON THE INSTANCE
+# with APP_KEY and DB_PASSWORD in it — only /backend/.env was ignored before,
+# so a `git add -A` on a deployed box would have committed live credentials.
+/.env
+/.env.*
+!/.env.example
+
+# Database dumps taken during a deploy
+backup-*.sql
+*.dump
+
 # Docker
 *.env.docker
 
