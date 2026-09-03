@@ -60,17 +60,24 @@ services:
       POSTGRES_DB: surgical_erp
       POSTGRES_USER: surgical
       POSTGRES_PASSWORD: ${DB_PASSWORD}
-    ports: []
+    # !reset, not []: Compose MERGES port lists, so a plain `[]` leaves the
+    # base file's 5432 published and exposes Postgres on the host.
+    ports: !reset []
     restart: unless-stopped
 
   mailpit:
+    # Dev mail sink. Its web UI has no authentication, so it must never be
+    # published in production; with MAIL_MAILER=log or real SMTP it is unused.
+    ports: !reset []
     restart: unless-stopped
 
   backend:
     environment:
       <<: *backend-env
       RUN_MIGRATIONS: "true"   # the web container owns migrations
-    ports: []
+    # Reached as http://backend:8000 over the docker network by the frontend's
+    # nginx; nothing needs it on the host.
+    ports: !reset []
     restart: unless-stopped
 
   queue:
@@ -102,6 +109,8 @@ services:
     restart: unless-stopped
 
   frontend:
-    ports:
+    # !override REPLACES the base file's 8080 mapping instead of adding to it,
+    # so only 80 is public. (!reset would clear the list entirely.)
+    ports: !override
       - "80:80"
     restart: unless-stopped
