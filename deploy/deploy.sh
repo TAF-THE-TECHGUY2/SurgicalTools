@@ -90,7 +90,8 @@ echo "==> Building images and starting the stack"
 echo "==> Waiting for the API to finish migrating…"
 sleep 8
 "${COMPOSE[@]}" exec -T backend php artisan migrate --force || true
-"${COMPOSE[@]}" exec -T backend php artisan storage:link || true
+# storage:link is done by the container entrypoint — running it from here
+# wrote into the container's ephemeral layer and was lost on the next recreate.
 
 if [ "$SEED" = true ]; then
   echo "==> Seeding roles, permissions and demo accounts (first run only)"

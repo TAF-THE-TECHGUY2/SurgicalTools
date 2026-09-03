@@ -26,6 +26,13 @@ if [ "$SEED_ON_BOOT" = "true" ]; then
   php artisan db:seed --force || true
 fi
 
+# public/storage lives in the image layer, not the storage volume, so it has
+# to be recreated on every boot — a link made from outside the container is
+# lost on the next recreate. Harmless with FILESYSTEM_DISK=local (the local
+# disk has serve=true and Laravel routes /storage itself), but required if the
+# public disk is ever used.
+php artisan storage:link || true
+
 php artisan config:cache || true
 php artisan route:cache || true
 
