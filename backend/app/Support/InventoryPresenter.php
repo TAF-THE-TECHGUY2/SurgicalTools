@@ -35,6 +35,7 @@ class InventoryPresenter
                     $w->where('name', 'like', $like)
                         ->orWhere('catalogue_number', 'like', $like)
                         ->orWhere('item_code', 'like', $like)
+                        ->orWhere('gtin', 'like', $like)
                         ->orWhereHas('units', fn ($u) => $scope($u)
                             ->where(fn ($x) => $x->where('lot_number', 'like', $like)
                                 ->orWhere('serial_number', 'like', $like)));
@@ -53,6 +54,10 @@ class InventoryPresenter
                 'name'             => $item->name,
                 'catalogue_number' => $item->catalogue_number,
                 'item_code'        => $item->item_code,
+                // Needed for barcode matching in the browser: the voucher
+                // scanner resolves scans against this payload before any
+                // transfer exists to ask the server about.
+                'gtin'             => $item->gtin,
                 'quantity'         => $item->units->count(), // physically on hand
                 'available'        => $available,            // selectable for transfer
                 'pending_out'      => $pending,              // reserved in a pending transfer

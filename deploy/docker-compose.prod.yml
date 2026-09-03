@@ -43,6 +43,17 @@ x-backend-env: &backend-env
   AWS_BUCKET: ${AWS_BUCKET:-}
   SEED_ON_BOOT: "false"
 
+  # --- Scan & voucher module ------------------------------------------------
+  # VOUCHER_START_NUMBER must clear the paper pads before go-live; verify with
+  #   docker compose ... exec backend php artisan surgical:voucher-status --paper-high=NNNNNN
+  VOUCHER_START_NUMBER: ${VOUCHER_START_NUMBER:-130119}
+  # Optional: OCR fallback for labels whose barcode won't decode. Barcode
+  # scanning works without it.
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  OCR_MIN_CONFIDENCE: ${OCR_MIN_CONFIDENCE:-0.8}
+  # 0 = mail every flagged line immediately (needs the queue worker to batch).
+  STOCK_COUNT_DIGEST_MINUTES: ${STOCK_COUNT_DIGEST_MINUTES:-5}
+
 services:
   db:
     environment:

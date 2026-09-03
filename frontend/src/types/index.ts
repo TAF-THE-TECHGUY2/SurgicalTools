@@ -37,6 +37,8 @@ export interface StockItem {
   name: string
   catalogue_number?: string | null
   item_code?: string | null
+  /** GS1 barcode identifier, learned on first confirmed scan. */
+  gtin?: string | null
   description?: string | null
   uom?: string | null
   unit_price?: string | number | null
@@ -70,6 +72,7 @@ export interface GroupedStockRow {
   name: string
   catalogue_number?: string | null
   item_code?: string | null
+  gtin?: string | null
   quantity: number
   available: number
   pending_out: number
@@ -207,6 +210,10 @@ export interface TransferItem {
   quantity: number
   expiry_date?: string | null
   unit_price?: string | number | null
+  /** Scanned stock the dispatch list did not authorise — renders orange. */
+  is_transfer_adjustment?: boolean
+  adjustment_type?: string | null
+  expected_lot_number?: string | null
 }
 
 export interface TransferSignature {
@@ -227,6 +234,14 @@ export interface TransferDocument {
 export interface Transfer {
   id: number
   reference: string
+  /** Customer-facing serial, continuing the paper pad (e.g. "130119"). */
+  voucher_number?: string | null
+  transfer_date?: string | null
+  invoice_reference?: string | null
+  delivery_address?: string | null
+  contact_person_name?: string | null
+  recipient_name?: string | null
+  delivery_timestamp?: string | null
   type: TransferType
   type_label?: string
   status: TransferStatus
@@ -260,16 +275,95 @@ export interface Transfer {
 export type StockCountStatus =
   | 'requested' | 'in_progress' | 'submitted' | 'under_review' | 'approved' | 'investigating'
 
+/** Why a line was raised as an adjustment rather than counted. */
+export type StockCountAdjustmentType = 'lot_mismatch' | 'unlisted_item' | 'expiry_mismatch'
+
 export interface StockCountItem {
   id: number
+  stock_item_id?: number | null
   ref_code: string
   description?: string | null
   lot_number?: string | null
+  expiry_date?: string | null
   expected_quantity: number
+  scanned_quantity: number
   counted_quantity?: number | null
   variance?: number | null
+  /** Drives the orange row treatment. */
+  is_adjustment: boolean
+  adjustment_type?: StockCountAdjustmentType | null
+  adjustment_label?: string | null
+  parent_item_id?: number | null
+  /** What the site expected, shown struck through beside the lot found. */
+  expected_lot_number?: string | null
+  first_scanned_at?: string | null
+  last_scanned_at?: string | null
   photo_url?: string | null
   notes?: string | null
+}
+
+export type ScanSource = 'barcode' | 'vision' | 'manual'
+
+/** What a label capture yielded. Nulls are fields that could not be read. */
+export interface ScanExtraction {
+  ref?: string | null
+  gtin?: string | null
+  lot_number?: string | null
+  expiry_date?: string | null
+  serial_number?: string | null
+}
+
+export type ScanMatchResult =
+  | 'match' | 'unresolved' | StockCountAdjustmentType
+
+export interface StockCountScan {
+  id: number
+  stock_count_id: number
+  stock_count_item_id?: number | null
+  stock_item_id?: number | null
+  source: ScanSource
+  extracted?: ScanExtraction | null
+  confidence?: number | null
+  match_result: ScanMatchResult
+  confirmed: boolean
+  needs_review: boolean
+  image_url?: string | null
+  client_id?: string | null
+  created_at?: string
+  line?: StockCountItem | null
+}
+
+/**
+ * POST /scan/extract — a stateless label read, used where there is no record
+ * to scan into yet (building a delivery voucher before the transfer exists).
+ */
+export interface ScanExtractResponse {
+  extracted: ScanExtraction & { confidence?: number; raw_text?: string }
+  stock_item: StockItem | null
+  needs_review: boolean
+}
+
+/**
+ * An off-list scan held in the browser while the voucher is built, posted as
+ * `scanned_adjustments` on submit.
+ */
+export interface TransferAdjustmentDraft {
+  /** Local key, so a mis-scan can be removed before submitting. */
+  key: string
+  ref_code: string
+  description?: string | null
+  lot_number?: string | null
+  expiry_date?: string | null
+  expected_lot_number?: string | null
+  adjustment_type: string
+}
+
+/** POST /stock-counts/{id}/scan */
+export interface ScanResponse {
+  scan: StockCountScan
+  line: StockCountItem | null
+  needs_review: boolean
+  stock_count: StockCount
 }
 
 export interface StockCount {
@@ -283,6 +377,7 @@ export interface StockCount {
   requester?: User | null
   assignee?: User | null
   items?: StockCountItem[]
+  adjustment_count?: number
   submitted_at?: string | null
   reviewed_at?: string | null
   created_at?: string

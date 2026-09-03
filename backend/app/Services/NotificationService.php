@@ -2,13 +2,18 @@
 
 namespace App\Services;
 
+use App\Jobs\SendStockCountDiscrepancyDigest;
+use App\Mail\StockCountSummaryMail;
 use App\Mail\TransferDocumentMail;
 use App\Models\Document;
 use App\Models\StockCount;
+use App\Models\StockCountItem;
 use App\Models\StockItem;
 use App\Models\Transfer;
+use App\Models\TransferItem;
 use App\Models\User;
 use App\Notifications\InventoryAlertNotification;
+use App\Notifications\StockCountDiscrepancyNotification;
 use App\Notifications\StockCountRequestedNotification;
 use App\Notifications\StockCountStatusNotification;
 use App\Notifications\TransferStatusNotification;
@@ -65,6 +70,27 @@ class NotificationService
         ));
     }
 
+    /**
+     * Voucher spec §3: an orange-flagged transfer line fires an immediate
+     * warning to admin operations.
+     *
+     * Unlike a stock count, a voucher carries a handful of lines rather than
+     * hundreds, so there is nothing to batch — every flagged line mails.
+     */
+    public function transferDiscrepancy(TransferItem $line): void
+    {
+        $transfer = $line->transfer;
+
+        NotificationFacade::send($this->admins(), new TransferStatusNotification(
+            $transfer,
+            'discrepancy',
+            "Voucher {$transfer->voucher_number} ({$transfer->reference}): {$line->ref_code}"
+                .($line->lot_number ? " lot {$line->lot_number}" : '')
+                .' is not on the authorised dispatch list for '
+                .($transfer->fromLocation?->name ?? 'the source location').'.',
+        ));
+    }
+
     public function stockCountRequested(StockCount $count): void
     {
         if ($count->assignee) {
@@ -86,6 +112,93 @@ class NotificationService
             "Stock count {$count->reference} was submitted and needs review"
                 .($count->total_variance ? " (variance {$count->total_variance})." : '.'),
         ));
+    }
+
+    /**
+     * Spec §4: a Lot/Stock Adjustment line was raised — alert admin staff.
+     *
+     * In-app notification is always immediate and per-line. Email is throttled:
+     * the first discrepancy on a count mails at once, and the rest are
+     * coalesced into a delayed digest so a rep working a shelf of mixed lots
+     * cannot bury the admin inbox. Setting
+     * surgical.stock_count.discrepancy_digest_minutes to 0 mails every line
+     * immediately, which is the literal reading of the spec.
+     */
+    public function stockCountDiscrepancy(StockCountItem $line, ?User $raisedBy = null): void
+    {
+        $count = $line->stockCount;
+
+        $isFirst = $count->items()
+            ->where('is_adjustment', true)
+            ->whereKeyNot($line->getKey())
+            ->doesntExist();
+
+        $mailNow = ! $this->shouldDigestDiscrepancies() || $isFirst;
+
+        $recipients = $this->admins()
+            // Whoever is scanning already sees the orange row in front of them.
+            ->reject(fn (User $u) => $raisedBy && $u->id === $raisedBy->id)
+            ->unique('id')
+            ->values();
+
+        NotificationFacade::send($recipients, new StockCountDiscrepancyNotification($line, $mailNow));
+
+        if ($mailNow) {
+            // Already mailed on its own — keep it out of the next digest.
+            $line->forceFill(['digest_notified_at' => now()])->save();
+
+            return;
+        }
+
+        SendStockCountDiscrepancyDigest::dispatch($count->id)
+            ->delay(now()->addMinutes(
+                (int) config('surgical.stock_count.discrepancy_digest_minutes', 5)
+            ));
+    }
+
+    /**
+     * Whether discrepancy emails after the first should be batched.
+     *
+     * Two things switch batching off. A configured window of 0 is the operator
+     * asking for the spec's literal per-line email. A `sync` queue is the more
+     * subtle one: a delayed dispatch on sync executes immediately, so the
+     * digest would fire once per scan and mail one line at a time — worse than
+     * not batching at all. Batching therefore requires a real queue worker,
+     * which production runs (QUEUE_CONNECTION=database) and tests do not.
+     */
+    protected function shouldDigestDiscrepancies(): bool
+    {
+        return (int) config('surgical.stock_count.discrepancy_digest_minutes', 5) > 0
+            && config('queue.default') !== 'sync';
+    }
+
+    /**
+     * Admin email addresses, plus the configured operational mailboxes. Used
+     * for documents and digests, which go out as mail rather than as
+     * per-user notifications.
+     *
+     * @return array<int, string>
+     */
+    public function adminEmails(): array
+    {
+        $emails = $this->admins()->pluck('email')->all();
+
+        $emails[] = config('surgical.notifications.office');
+        $emails[] = config('surgical.notifications.stock_controller');
+        $emails[] = config('surgical.notifications.inventory_controller');
+
+        return array_values(array_unique(array_filter($emails)));
+    }
+
+    /**
+     * Spec §4 finalisation: the count was submitted — email the Final Summary
+     * Report to management with the full dataset attached.
+     */
+    public function stockCountSummary(StockCount $count, Document $pdf): void
+    {
+        foreach ($this->adminEmails() as $email) {
+            Mail::to($email)->queue(new StockCountSummaryMail($count, $pdf));
+        }
     }
 
     /** Low-stock / expiry alert for a stock item. */

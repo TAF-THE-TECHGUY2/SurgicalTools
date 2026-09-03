@@ -8,11 +8,14 @@ export interface Column<T> {
   className?: string
 }
 
-export function DataTable<T>({ columns, rows, rowKey, onRowClick, empty }: {
+export function DataTable<T>({ columns, rows, rowKey, onRowClick, rowClassName, empty }: {
   columns: Column<T>[]
   rows: T[]
   rowKey: (row: T) => string | number
   onRowClick?: (row: T) => void
+  /** Per-row classes — used to flag exception rows (e.g. the orange
+   *  highlight on a scanned line the dispatch list did not authorise). */
+  rowClassName?: (row: T) => string | undefined
   empty?: ReactNode
 }) {
   return (
@@ -42,6 +45,7 @@ export function DataTable<T>({ columns, rows, rowKey, onRowClick, empty }: {
                 className={cn(
                   'border-b border-slate-100 transition-colors',
                   onRowClick && 'cursor-pointer hover:bg-brand-50/40',
+                  rowClassName?.(row),
                 )}
               >
                 {columns.map((col) => (

@@ -26,7 +26,7 @@ class RolePermissionSeeder extends Seeder
         $general->syncPermissions([
             'inventory.view',
             'transfer.view', 'transfer.create', 'transfer.approve',
-            'stock_count.capture',
+            'stock_count.capture', 'stock_count.scan',
             'hospital.view', 'doctor.view',
         ]);
 
@@ -35,7 +35,7 @@ class RolePermissionSeeder extends Seeder
         $admin->syncPermissions([
             'inventory.view', 'inventory.manage',
             'transfer.view', 'transfer.create', 'transfer.approve', 'transfer.override', 'transfer.review',
-            'stock_count.capture', 'stock_count.review',
+            'stock_count.capture', 'stock_count.scan', 'stock_count.review',
             'hospital.view', 'hospital.manage',
             'doctor.view', 'doctor.manage',
             'report.view', 'pastel.export', 'audit.view',

@@ -20,6 +20,10 @@ class TransferItemResource extends JsonResource
             'quantity'          => $this->quantity,
             'expiry_date'       => optional($this->expiry_date)->toDateString(),
             'unit_price'        => $this->unit_price,
+            // Orange row: scanned stock the dispatch list did not authorise.
+            'is_transfer_adjustment' => (bool) $this->is_transfer_adjustment,
+            'adjustment_type'        => $this->adjustment_type,
+            'expected_lot_number'    => $this->expected_lot_number,
         ];
     }
 }

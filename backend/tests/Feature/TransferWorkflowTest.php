@@ -134,6 +134,13 @@ class TransferWorkflowTest extends TestCase
         $units = $this->trochar->units()->pluck('id')->take(1)->all();
         $transfer = $this->requestTransfer($this->josh, $units, $this->joshBoot, $hospitalLocation);
 
+        // A hospital delivery needs the recipient's signature before it can be
+        // approved — the paper voucher's NAME OF RECIPIENT / SIGNATURE block.
+        app(TransferService::class)->signDelivery($transfer->fresh(), [
+            'recipient_name' => 'Sister Dlamini',
+            'signature'      => base64_encode('signature-bytes'),
+        ], $this->josh);
+
         app(TransferService::class)->approve($transfer->fresh(), $this->admin);
 
         $this->assertSame('delivery_note', $transfer->fresh()->documents()->first()?->type);

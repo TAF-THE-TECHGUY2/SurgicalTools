@@ -27,7 +27,9 @@ class LocationController extends Controller
 
     public function show(Location $location)
     {
-        return new LocationResource($location->load(['owner:id,name', 'hospital'])->loadCount('units'));
+        return new LocationResource(
+            $location->load(['owner:id,name', 'hospital.contacts'])->loadCount('units')
+        );
     }
 
     /** Grouped stock at a location: items → expandable serial/lot/expiry units. */

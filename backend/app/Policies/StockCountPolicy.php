@@ -38,6 +38,20 @@ class StockCountPolicy
         return $user->can('stock_count.capture') && $count->assigned_to === $user->id;
     }
 
+    /**
+     * Scan labels into the count. Scanning writes lines, so it is gated the
+     * same way capture is — the assigned rep, or an admin — and additionally
+     * needs the scan permission, which can be withheld per user.
+     */
+    public function scan(User $user, StockCount $count): bool
+    {
+        if (! $user->can('stock_count.scan')) {
+            return false;
+        }
+
+        return $this->capture($user, $count);
+    }
+
     /** Admin review / approve / investigate. */
     public function review(User $user, StockCount $count): bool
     {

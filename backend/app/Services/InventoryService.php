@@ -59,13 +59,24 @@ class InventoryService
     /**
      * Write off $count units of an item at a location (e.g. an approved stock
      * count found them missing). Oldest expiry first.
+     *
+     * The write-off is always confined to one lot, because stock-count lines
+     * are snapshotted per (item, lot) and a shortfall on one lot must not
+     * consume units of another lot that were counted correctly. `null` means
+     * the no-lot group — units whose `lot_number` is itself null — not "any
+     * lot".
      */
-    public function markUnitsMissing(StockItem $item, Location $location, int $count, string $reason, ?int $userId = null, $reference = null): int
+    public function markUnitsMissing(StockItem $item, Location $location, int $count, string $reason, ?int $userId = null, $reference = null, ?string $lotNumber = null): int
     {
-        return DB::transaction(function () use ($item, $location, $count, $reason, $userId, $reference) {
+        return DB::transaction(function () use ($item, $location, $count, $reason, $userId, $reference, $lotNumber) {
             $units = DeviceUnit::where('stock_item_id', $item->id)
                 ->where('location_id', $location->id)
                 ->where('status', DeviceUnitStatus::Available->value)
+                ->when(
+                    $lotNumber !== null,
+                    fn ($q) => $q->where('lot_number', $lotNumber),
+                    fn ($q) => $q->whereNull('lot_number'),
+                )
                 ->orderByRaw('expiry_date IS NULL, expiry_date ASC')
                 ->limit($count)
                 ->lockForUpdate()

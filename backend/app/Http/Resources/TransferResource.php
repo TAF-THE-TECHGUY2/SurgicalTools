@@ -12,6 +12,13 @@ class TransferResource extends JsonResource
         return [
             'id'                  => $this->id,
             'reference'           => $this->reference,
+            'voucher_number'      => $this->voucher_number,
+            'transfer_date'       => $this->transfer_date?->toDateString(),
+            'invoice_reference'   => $this->invoice_reference,
+            'delivery_address'    => $this->delivery_address,
+            'contact_person_name' => $this->contact_person_name,
+            'recipient_name'      => $this->recipient_name,
+            'delivery_timestamp'  => $this->delivery_timestamp,
             'type'                => $this->type?->value,
             'type_label'          => $this->type?->label(),
             'status'              => $this->status?->value,

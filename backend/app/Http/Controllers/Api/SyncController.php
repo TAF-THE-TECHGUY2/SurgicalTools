@@ -19,6 +19,8 @@ use Illuminate\Support\Facades\Log;
  * Supported operations:
  *   - transfer.request   (create a unit-level transfer request, incl. signature)
  *   - stock_count.submit (submit counted quantities)
+ *   - stock_count.scan   (replay a label capture; the photo, if any, follows
+ *                         separately via stock-count-scans/{scan}/image)
  */
 class SyncController extends Controller
 {
@@ -71,6 +73,7 @@ class SyncController extends Controller
         $serverId = match ($op['type']) {
             'transfer.request'   => $this->createTransfer($payload, $op['client_id'], $user),
             'stock_count.submit' => $this->submitCount($payload, $user),
+            'stock_count.scan'   => $this->recordScan($payload, $op['client_id'], $user),
             default => throw new \InvalidArgumentException("Unknown sync type: {$op['type']}"),
         };
 
@@ -95,10 +98,39 @@ class SyncController extends Controller
         return $transfer->id;
     }
 
+    /**
+     * Replay a scan captured offline. `record()` is idempotent on client_id,
+     * so a repeated replay returns the existing scan instead of double-counting.
+     */
+    protected function recordScan(array $payload, string $clientId, $user): int
+    {
+        $count = \App\Models\StockCount::findOrFail($payload['stock_count_id']);
+
+        $extracted = isset($payload['barcode'])
+            ? app(\App\Services\ScanExtractionService::class)->parseGs1($payload['barcode'])
+            : [
+                'ref'           => $payload['ref'] ?? null,
+                'gtin'          => $payload['gtin'] ?? null,
+                'lot_number'    => $payload['lot_number'] ?? null,
+                'expiry_date'   => $payload['expiry_date'] ?? null,
+                'serial_number' => $payload['serial_number'] ?? null,
+                'confidence'    => $payload['confidence'] ?? 1.0,
+                'raw_text'      => $payload['raw_text'] ?? '',
+            ];
+
+        $scan = app(\App\Services\StockCountScanService::class)->record($count, $extracted, [
+            'source'      => $payload['source'] ?? \App\Models\StockCountScan::SOURCE_BARCODE,
+            'raw_payload' => $payload['barcode'] ?? null,
+            'client_id'   => $clientId,
+        ], $user);
+
+        return $scan->id;
+    }
+
     protected function submitCount(array $payload, $user): int
     {
         $count = \App\Models\StockCount::findOrFail($payload['stock_count_id']);
-        $this->counts->submit($count, $payload['lines']);
+        $this->counts->submit($count, $payload['lines'] ?? []);
 
         return $count->id;
     }

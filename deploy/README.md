@@ -39,12 +39,17 @@ Browser ──▶ :80/:443 ──▶ frontend (nginx)
 
 ## 2. Get the code onto the instance
 
-From your Mac (replace IP and key path). This copies the project without the
-heavy build artefacts:
+From your Mac (replace IP and key path). This copies the whole project —
+including `deploy/`, so the scripts travel with it. Don't copy `deploy.sh` on
+its own: it `cd`s to the repo root and builds from `docker-compose.yml` and the
+`backend/` + `frontend/` contexts, so it only works inside the project.
+
+`--exclude '.env'` keeps your local dev config (SQLite, Mailpit) off the
+server; `deploy.sh` generates a production `.env` on the instance instead.
 
 ```bash
 rsync -avz --exclude node_modules --exclude vendor --exclude dist \
-  --exclude '.git' --exclude 'backend/database/database.sqlite' \
+  --exclude '.git' --exclude '.env' --exclude 'backend/database/database.sqlite' \
   -e "ssh -i ~/path/to/key.pem" \
   /Users/tafsfolder/Documents/surgicaltool/ \
   ubuntu@<ELASTIC_IP>:/home/ubuntu/surgicaltool/
@@ -95,7 +100,12 @@ Subsequent deploys (after `rsync`-ing new code) are just:
 
 ---
 
-## 5. (Optional) HTTPS with a domain
+## 5. HTTPS with a domain — **required for scanning**
+
+> Browsers only expose the camera (`getUserMedia`) and service workers on a
+> **secure origin**. On plain HTTP at an IP address, label scanning and offline
+> capture are inert — the rest of the app works, but the scan button cannot
+> open a camera. If reps will scan in the field, TLS is not optional.
 
 1. Point a DNS **A record** (e.g. `erp.yourcompany.com`) at the Elastic IP.
 2. Add to `~/surgicaltool/.env`:
@@ -114,6 +124,21 @@ Subsequent deploys (after `rsync`-ing new code) are just:
 Make sure port 443 is open in the security group.
 
 ---
+
+## 5b. Upgrading an existing deployment
+
+`deploy.sh` runs `migrate --force` on every deploy, which is all that's needed:
+the new `stock_count.scan` permission is granted by a migration rather than by
+re-seeding, so **role permissions customised in the Users screen are preserved**.
+Do *not* re-run `db:seed` on a live database — `RolePermissionSeeder` uses
+`syncPermissions()` and would reset those customisations.
+
+After deploying, confirm the voucher sequence (the script prints this too):
+
+```bash
+DC="docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml"
+$DC exec backend php artisan surgical:voucher-status --paper-high=<highest paper number>
+```
 
 ## 6. Email & file storage in production
 

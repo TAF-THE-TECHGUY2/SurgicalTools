@@ -63,6 +63,21 @@ FILESYSTEM_DISK=local
 # AWS_SECRET_ACCESS_KEY=
 # AWS_DEFAULT_REGION=eu-west-1
 # AWS_BUCKET=
+
+# Delivery-voucher sequence. MUST be above every voucher number still
+# outstanding on a paper pad, or digital vouchers will duplicate written ones.
+# Verify before go-live:
+#   ./deploy/deploy.sh  (then follow the voucher check it prints)
+VOUCHER_START_NUMBER=130119
+
+# Optional OCR fallback for labels whose barcode will not decode. Barcode
+# scanning (the primary path) needs none of this.
+# ANTHROPIC_API_KEY=
+OCR_MIN_CONFIDENCE=0.8
+
+# Minutes to batch stock-count discrepancy emails after the first.
+# 0 = mail every flagged line immediately.
+STOCK_COUNT_DIGEST_MINUTES=5
 EOF
   echo "    APP_URL set to: $PUBLIC_ADDR"
   echo "    (edit $ENV_FILE if you use a domain / HTTPS, then re-run)"
@@ -83,6 +98,27 @@ if [ "$SEED" = true ]; then
 fi
 
 ADDR=$(grep '^APP_URL=' "$ENV_FILE" | cut -d= -f2-)
+
+# --- Voucher sequence check ------------------------------------------------
+# Cannot be answered from the code: the seed has to clear the paper pads.
+echo ""
+echo "==> Delivery-voucher sequence"
+"${COMPOSE[@]}" exec -T backend php artisan surgical:voucher-status || true
+
+# --- Secure-context warning ------------------------------------------------
+# getUserMedia and service workers require HTTPS (or localhost), so label
+# scanning and offline capture are inert on a plain-HTTP origin.
+case "$ADDR" in
+  https://*) ;;
+  *)
+    echo ""
+    echo "⚠  $ADDR is not HTTPS."
+    echo "   Barcode/label scanning and offline capture will NOT work: browsers"
+    echo "   only expose the camera and service workers on a secure origin."
+    echo "   Add a domain + TLS (deploy/README.md section 5) before field use."
+    ;;
+esac
+
 echo ""
 echo "✅ Deployed. Open: $ADDR"
 echo "   Containers:"

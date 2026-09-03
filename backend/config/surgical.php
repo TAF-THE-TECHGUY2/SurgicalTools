@@ -105,6 +105,46 @@ return [
 
     'low_stock_default_threshold' => (int) env('LOW_STOCK_DEFAULT_THRESHOLD', 5),
 
+    'voucher' => [
+        /*
+        | Where the digital "Stock Movement / Delivery Voucher" sequence
+        | starts. The paper pads run a bare six-digit serial (130101, 130118…),
+        | so this must be set above every number still outstanding in a rep's
+        | car — otherwise a digital voucher can duplicate a written one.
+        |
+        | CONFIRM WITH OPERATIONS BEFORE GOING LIVE.
+        */
+        'start_number' => (int) env('VOUCHER_START_NUMBER', 130119),
+    ],
+
+    'stock_count' => [
+        /*
+        | Spec §4 asks for an admin email the moment any line is flagged. Taken
+        | literally that is one email per scan, which floods the inbox during a
+        | large count. The first discrepancy on a count mails immediately and
+        | the rest are coalesced into a digest sent this many minutes later.
+        |
+        | Set to 0 for the literal behaviour: every flagged line mails at once.
+        | In-app notifications are always immediate and per-line either way.
+        */
+        'discrepancy_digest_minutes' => (int) env('STOCK_COUNT_DIGEST_MINUTES', 5),
+    ],
+
+    /*
+    | Label scanning. Barcodes (GS1 DataMatrix / Code 128) are the primary
+    | extraction path and need no configuration — they are decoded in the
+    | browser and parsed deterministically. The vision fallback below is only
+    | used for labels with no readable barcode; leave the key unset to disable
+    | it without affecting barcode scanning.
+    */
+    'ocr' => [
+        'api_key'        => env('ANTHROPIC_API_KEY'),
+        'model'          => env('OCR_MODEL', 'claude-opus-5'),
+        // Extractions at or below this are held for the runner to confirm.
+        'min_confidence' => (float) env('OCR_MIN_CONFIDENCE', 0.8),
+        'timeout'        => (int) env('OCR_TIMEOUT_SECONDS', 45),
+    ],
+
     // Where transfer/delivery-note PDFs are emailed.
     'notifications' => [
         'office'               => env('MAIL_OFFICE_ADDRESS', 'office@surgicaldevices.example'),

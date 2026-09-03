@@ -1,9 +1,9 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import {
-  ArrowLeft, ArrowRight, Building2, Briefcase, Check, ChevronDown, ChevronRight,
-  MapPin, Search, Send, Warehouse,
+  AlertTriangle, ArrowLeft, ArrowRight, Building2, Briefcase, Check, ChevronDown, ChevronRight,
+  MapPin, ScanLine, Search, Send, Trash2, Warehouse,
 } from 'lucide-react'
 import { api, apiError } from '@/lib/api'
 import { useAuth } from '@/auth/AuthContext'
@@ -16,24 +16,37 @@ import { Field, Input, Textarea } from '@/components/ui/Field'
 import { Badge } from '@/components/ui/Badge'
 import { LoadingState, ErrorState, EmptyState } from '@/components/ui/States'
 import { SignaturePad } from '@/components/SignaturePad'
+import { TransferScanSheet } from '@/components/scanner/TransferScanSheet'
 import { formatDate, formatDateTime, humanize } from '@/lib/format'
 import { cn } from '@/lib/cn'
-import type { DeviceUnit, GroupedStockRow, LocationEntity, LocationInventoryResponse, Transfer } from '@/types'
+import type {
+  DeviceUnit, GroupedStockRow, LocationEntity, LocationInventoryResponse, Transfer,
+  TransferAdjustmentDraft,
+} from '@/types'
 
-const STEPS = ['From', 'Stock', 'To', 'Sign & Request'] as const
+const STEPS = ['From', 'Stock', 'To', 'Voucher', 'Sign & Request'] as const
 
 export default function TransferCreatePage() {
   const navigate = useNavigate()
   const toast = useToast()
-  const { user } = useAuth()
+  const { user, hasPermission } = useAuth()
 
   const [step, setStep] = useState(0)
   const [fromId, setFromId] = useState<number | null>(null)
   const [toId, setToId] = useState<number | null>(null)
   const [selected, setSelected] = useState<Map<number, DeviceUnit & { itemName: string }>>(new Map())
+  const [adjustments, setAdjustments] = useState<TransferAdjustmentDraft[]>([])
   const [signature, setSignature] = useState('')
   const [notes, setNotes] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [scanning, setScanning] = useState(false)
+
+  // Voucher header — the paper form's own fields.
+  const [invoiceRef, setInvoiceRef] = useState('')
+  const [contactPerson, setContactPerson] = useState('')
+  const [address, setAddress] = useState('')
+  const [addressTouched, setAddressTouched] = useState(false)
+  const [contactTouched, setContactTouched] = useState(false)
 
   const { data: locations, isLoading: locationsLoading } = useQuery({
     queryKey: ['locations'],
@@ -42,6 +55,35 @@ export default function TransferCreatePage() {
 
   const from = locations?.find((l) => l.id === fromId) ?? null
   const to = locations?.find((l) => l.id === toId) ?? null
+
+  // Source inventory, loaded once for the picker and reused by the scanner so
+  // a scan can be matched without a round trip per label.
+  const { data: sourceInventory } = useQuery({
+    queryKey: ['location-inventory', fromId, ''],
+    queryFn: async () =>
+      (await api.get<LocationInventoryResponse>(`/locations/${fromId}/inventory`)).data,
+    enabled: fromId !== null,
+  })
+
+  // The /locations list is lean (id + name only for the hospital), so the
+  // voucher header is prefilled from the destination's own record.
+  const { data: destination } = useQuery({
+    queryKey: ['locations', toId],
+    queryFn: async () => (await api.get<{ data: LocationEntity }>(`/locations/${toId}`)).data.data,
+    enabled: toId !== null,
+  })
+
+  useEffect(() => {
+    if (!destination?.hospital) return
+    if (!addressTouched) setAddress(destination.hospital.address ?? '')
+    if (!contactTouched) {
+      const contacts = destination.hospital.contacts ?? []
+      const contact = contacts.find((c) => c.is_primary)
+        ?? contacts.find((c) => (c.role ?? '').toLowerCase().includes('stock'))
+        ?? contacts[0]
+      setContactPerson(contact?.name ?? '')
+    }
+  }, [destination, addressTouched, contactTouched])
 
   const toggleUnit = (unit: DeviceUnit, itemName: string) => {
     setSelected((prev) => {
@@ -52,22 +94,42 @@ export default function TransferCreatePage() {
     })
   }
 
+  /** The scanner only ever adds — a scanned item is in the box. */
+  const selectUnit = (unit: DeviceUnit, itemName: string) => {
+    setSelected((prev) => {
+      if (prev.has(unit.id)) return prev
+      const next = new Map(prev)
+      next.set(unit.id, { ...unit, itemName })
+      return next
+    })
+  }
+
   const selectFrom = (id: number) => {
-    if (id !== fromId) setSelected(new Map()) // changing source clears the picks
+    if (id !== fromId) {
+      // Changing source invalidates both the picks and the scanned exceptions.
+      setSelected(new Map())
+      setAdjustments([])
+    }
     setFromId(id)
     if (toId === id) setToId(null)
     setStep(1)
   }
 
+  const selectTo = (id: number) => {
+    setToId(id)
+    setStep(3)
+  }
+
   const canNext = [
     fromId !== null,
-    selected.size > 0,
+    selected.size > 0 || adjustments.length > 0,
     toId !== null,
+    true, // voucher header is all optional
     signature !== '',
   ][step]
 
   const submit = async () => {
-    if (!fromId || !toId || selected.size === 0 || !signature) return
+    if (!fromId || !toId || (selected.size === 0 && adjustments.length === 0) || !signature) return
     setSubmitting(true)
 
     const payload = {
@@ -76,6 +138,11 @@ export default function TransferCreatePage() {
       unit_ids: [...selected.keys()],
       signature,
       notes: notes || null,
+      invoice_reference: invoiceRef || null,
+      contact_person_name: contactPerson || null,
+      delivery_address: address || null,
+      // Local keys are for the UI only; the server assigns its own line ids.
+      scanned_adjustments: adjustments.map(({ key: _key, ...row }) => row),
     }
 
     try {
@@ -86,7 +153,9 @@ export default function TransferCreatePage() {
         return
       }
       const { data } = await api.post<{ data: Transfer }>('/transfers', payload)
-      toast.success(`Transfer ${data.data.reference} requested — sent to the Approval Centre.`)
+      toast.success(
+        `Voucher ${data.data.voucher_number ?? data.data.reference} created — sent to the Approval Centre.`,
+      )
       navigate(`/transfers/${data.data.id}`)
     } catch (err) {
       toast.error(apiError(err))
@@ -94,6 +163,8 @@ export default function TransferCreatePage() {
       setSubmitting(false)
     }
   }
+
+  const canScan = hasPermission('transfer.create')
 
   return (
     <>
@@ -106,7 +177,7 @@ export default function TransferCreatePage() {
             <button
               onClick={() => i < step && setStep(i)}
               className={cn(
-                'flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-semibold',
+                'flex items-center gap-2 whitespace-nowrap rounded-full px-3 py-1.5 text-xs font-semibold',
                 i === step ? 'bg-brand-700 text-white'
                   : i < step ? 'bg-brand-100 text-brand-800'
                   : 'bg-slate-100 text-slate-400',
@@ -130,23 +201,88 @@ export default function TransferCreatePage() {
       )}
 
       {step === 1 && fromId && (
-        <StockPicker fromId={fromId} fromName={from?.name ?? ''} selected={selected} onToggle={toggleUnit} />
+        <>
+          {canScan && (
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-brand-200 bg-brand-50 px-4 py-3">
+              <div className="text-sm">
+                <p className="font-semibold text-brand-900">Scan the box</p>
+                <p className="text-brand-800">
+                  Read each label instead of ticking boxes. Anything not on the dispatch
+                  list is flagged rather than blocked.
+                </p>
+              </div>
+              <Button onClick={() => setScanning(true)}>
+                <ScanLine className="h-4 w-4" /> Scan items
+              </Button>
+            </div>
+          )}
+
+          {adjustments.length > 0 && <AdjustmentList rows={adjustments} onRemove={removeAdjustment} />}
+
+          <StockPicker fromId={fromId} fromName={from?.name ?? ''} selected={selected} onToggle={toggleUnit} />
+        </>
       )}
 
       {step === 2 && (
         <LocationGrid
           locations={(locations ?? []).filter((l) => l.id !== fromId)}
           selectedId={toId}
-          onSelect={(id) => { setToId(id); setStep(3) }}
+          onSelect={selectTo}
           title="Where is it going?"
         />
       )}
 
       {step === 3 && (
+        <Card>
+          <CardBody className="grid gap-4 sm:grid-cols-2">
+            <div className="sm:col-span-2">
+              <h3 className="font-semibold text-slate-800">Delivery voucher</h3>
+              <p className="text-sm text-slate-500">
+                These print on the voucher. Address and contact are prefilled from
+                {' '}{to?.name ?? 'the destination'} — edit if this delivery differs.
+              </p>
+            </div>
+
+            <Field label="Invoice no." hint="Leave blank if the invoice is raised after delivery.">
+              <Input value={invoiceRef} onChange={(e) => setInvoiceRef(e.target.value)} placeholder="INV-4471" />
+            </Field>
+
+            <Field label="Contact person">
+              <Input
+                value={contactPerson}
+                onChange={(e) => { setContactTouched(true); setContactPerson(e.target.value) }}
+                placeholder="Sister Dlamini"
+              />
+            </Field>
+
+            <div className="sm:col-span-2">
+              <Field label="Address">
+                <Textarea
+                  value={address}
+                  onChange={(e) => { setAddressTouched(true); setAddress(e.target.value) }}
+                  placeholder="Delivery address"
+                />
+              </Field>
+            </div>
+
+            <div className="sm:col-span-2">
+              <Field label="Notes">
+                <Textarea
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  placeholder="Optional context for the approver…"
+                />
+              </Field>
+            </div>
+          </CardBody>
+        </Card>
+      )}
+
+      {step === 4 && (
         <div className="grid gap-6 lg:grid-cols-2">
           <Card>
             <CardBody>
-              <h3 className="mb-3 font-semibold text-slate-800">Transfer summary</h3>
+              <h3 className="mb-3 font-semibold text-slate-800">Voucher summary</h3>
               <div className="mb-4 flex items-center gap-2 text-sm">
                 <Badge tone="teal">{from?.name}</Badge>
                 <ArrowRight className="h-4 w-4 text-slate-400" />
@@ -171,19 +307,49 @@ export default function TransferCreatePage() {
                         <td className="px-3 py-2">{formatDate(u.expiry_date)}</td>
                       </tr>
                     ))}
+                    {adjustments.map((a) => (
+                      <tr key={a.key} className="border-t border-orange-200 bg-orange-50">
+                        <td className="px-3 py-2 font-medium text-orange-900">
+                          {a.description ?? a.ref_code}
+                          <span className="ml-1.5 text-[10px] font-semibold uppercase text-orange-700">
+                            {humanize(a.adjustment_type)}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 text-orange-800">—</td>
+                        <td className="px-3 py-2 text-orange-900">
+                          {a.expected_lot_number && (
+                            <span className="mr-1 line-through opacity-70">{a.expected_lot_number}</span>
+                          )}
+                          {a.lot_number ?? '—'}
+                        </td>
+                        <td className="px-3 py-2 text-orange-800">{formatDate(a.expiry_date)}</td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>
-              <p className="mb-3 mt-2 text-right text-sm font-semibold text-slate-700">{selected.size} device(s)</p>
-              <Field label="Notes">
-                <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Optional context for the approver…" />
-              </Field>
+              <p className="mb-3 mt-2 text-right text-sm font-semibold text-slate-700">
+                {selected.size} device(s)
+                {adjustments.length > 0 && (
+                  <span className="text-orange-700"> · {adjustments.length} flagged</span>
+                )}
+              </p>
+
+              {adjustments.length > 0 && (
+                <div className="flex items-start gap-2 rounded-lg border-l-4 border-orange-400 bg-orange-50 px-3 py-2 text-xs text-orange-900">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-orange-600" />
+                  <span>
+                    Flagged lines will alert admin operations on submit. They carry no
+                    reserved device, so approval moves no stock for them.
+                  </span>
+                </div>
+              )}
             </CardBody>
           </Card>
 
           <Card>
             <CardBody>
-              <h3 className="mb-1 font-semibold text-slate-800">Digital signature</h3>
+              <h3 className="mb-1 font-semibold text-slate-800">Your signature</h3>
               <p className="mb-3 text-xs text-slate-500">
                 Signed by <span className="font-medium text-slate-700">{user?.name}</span> · {formatDateTime(new Date().toISOString())} (captured automatically)
               </p>
@@ -191,9 +357,16 @@ export default function TransferCreatePage() {
               <Button className="mt-4 w-full" size="lg" disabled={!signature} loading={submitting} onClick={() => void submit()}>
                 <Send className="h-4 w-4" /> Request Transfer
               </Button>
-              <p className="mt-2 text-center text-xs text-slate-400">
-                The request goes to the Approval Centre. Stock only moves once it's approved.
-              </p>
+              {to?.type === 'hospital' ? (
+                <p className="mt-2 text-center text-xs text-slate-400">
+                  The recipient signs for this on delivery — the voucher cannot be
+                  approved until they do.
+                </p>
+              ) : (
+                <p className="mt-2 text-center text-xs text-slate-400">
+                  The request goes to the Approval Centre. Stock only moves once it's approved.
+                </p>
+              )}
             </CardBody>
           </Card>
         </div>
@@ -204,13 +377,79 @@ export default function TransferCreatePage() {
         <Button variant="outline" disabled={step === 0} onClick={() => setStep((s) => s - 1)}>
           <ArrowLeft className="h-4 w-4" /> Back
         </Button>
-        {step < 3 && (
+        {step < STEPS.length - 1 && (
           <Button disabled={!canNext} onClick={() => setStep((s) => s + 1)}>
             Next <ArrowRight className="h-4 w-4" />
           </Button>
         )}
       </div>
+
+      {scanning && fromId && (
+        <TransferScanSheet
+          sourceName={from?.name ?? 'the source'}
+          inventory={sourceInventory?.items ?? []}
+          selected={selected}
+          adjustments={adjustments}
+          onSelectUnit={selectUnit}
+          onAddAdjustment={(row) => setAdjustments((prev) => [...prev, row])}
+          onRemoveAdjustment={removeAdjustment}
+          onClose={() => setScanning(false)}
+        />
+      )}
     </>
+  )
+
+  function removeAdjustment(key: string) {
+    setAdjustments((prev) => prev.filter((a) => a.key !== key))
+  }
+}
+
+/* ---------------------------------------------------------------------- */
+/*  Scanned exceptions, shown on the picker step                           */
+/* ---------------------------------------------------------------------- */
+
+function AdjustmentList({ rows, onRemove }: {
+  rows: TransferAdjustmentDraft[]
+  onRemove: (key: string) => void
+}) {
+  return (
+    <Card className="mb-4">
+      <CardBody className="p-0">
+        <div className="flex items-center gap-2 border-b border-orange-200 bg-orange-50 px-4 py-2.5">
+          <AlertTriangle className="h-4 w-4 text-orange-600" />
+          <span className="text-sm font-semibold text-orange-900">
+            {rows.length} flagged line{rows.length === 1 ? '' : 's'}
+          </span>
+          <span className="text-xs text-orange-800">
+            Scanned, but not on this location's dispatch list
+          </span>
+        </div>
+        <ul className="divide-y divide-orange-100">
+          {rows.map((a) => (
+            <li key={a.key} className="flex items-center justify-between gap-3 border-l-4 border-orange-400 bg-orange-50/60 px-4 py-2.5">
+              <div className="min-w-0 text-sm">
+                <p className="truncate font-medium text-orange-900">
+                  {a.ref_code}
+                  {a.description && <span className="ml-1.5 font-normal">{a.description}</span>}
+                </p>
+                <p className="truncate text-xs text-orange-800">
+                  {humanize(a.adjustment_type)}
+                  {a.lot_number && <> · Lot {a.lot_number}</>}
+                  {a.expected_lot_number && <> · expected <span className="line-through">{a.expected_lot_number}</span></>}
+                </p>
+              </div>
+              <button
+                aria-label={`Remove flagged line ${a.ref_code}`}
+                onClick={() => onRemove(a.key)}
+                className="shrink-0 rounded-md p-1.5 text-orange-700 hover:bg-orange-100"
+              >
+                <Trash2 className="h-4 w-4" />
+              </button>
+            </li>
+          ))}
+        </ul>
+      </CardBody>
+    </Card>
   )
 }
 

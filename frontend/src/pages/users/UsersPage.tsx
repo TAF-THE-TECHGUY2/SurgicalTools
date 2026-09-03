@@ -444,6 +444,7 @@ const permissionLabels: Record<string, string> = {
   'transfer.override': 'Override Transfers',
   'transfer.review': 'Final Transfer Review',
   'stock_count.capture': 'Capture Counts',
+  'stock_count.scan': 'Scan Labels',
   'stock_count.review': 'Review Counts',
 }
 

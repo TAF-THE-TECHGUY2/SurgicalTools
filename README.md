@@ -106,6 +106,11 @@ npm run dev                    # http://localhost:5173 (proxies /api → :8000)
 | Digital signatures | `SignaturePad` (React) → `transfer_signatures` + embedded in PDFs |
 | PDF generation | `PdfService` (DomPDF) → stored as `documents`, emailed |
 | Stock counts + variance | `StockCount(Item)`, `StockCountService` |
+| Label scanning (GS1 barcode → OCR fallback) | `useBarcodeScanner`, `ScanSheet`, `ScanExtractionService`, `ClaudeVisionClient` |
+| Lot/stock adjustments (orange rows) | `StockCountScanService`, `StockCountAdjustmentType` |
+| Stock-count summary report | `PdfService::generateStockCountSummary` → emailed on submit |
+| Delivery voucher (paper form, digitised) | `voucher_number`, `pdf/partials/document.blade.php`, `TransferScanSheet` |
+| Recipient signature at hand-over | `TransferService::signDelivery` → gates approval |
 | Hospitals / contacts / rep assignment | `Hospital`, `hospital_user` pivot |
 | Doctors + preference cards (printable) | `Doctor`, `PreferenceCard`, `/print` |
 | Admin Approval Centre | `ApprovalCentreController` queues |
@@ -176,8 +181,44 @@ Platform, etc.).
 - PostgreSQL (managed, e.g. RDS/Cloud SQL).
 - `FILESYSTEM_DISK=s3` with bucket credentials for documents/signatures/photos.
 - Queue worker for emails/notifications: `php artisan queue:work` (supervisor).
+  **Required** for stock-count discrepancy emails to batch — without a worker
+  every flagged line mails individually (see `STOCK_COUNT_DIGEST_MINUTES`).
 - Cron for scheduled alerts: `* * * * * php artisan schedule:run`.
 - `php artisan config:cache route:cache` on deploy.
+
+### Go-live checks
+
+Two things cannot be verified from the code and must be confirmed before the
+first real delivery or count.
+
+**1. The delivery-voucher sequence.** Digital vouchers continue the numbering of
+the physical pads, so the seed has to sit above every number still outstanding
+in a rep's car. Ask operations *"what is the highest voucher number on any pad
+that has been issued or is still out with a rep?"*, then:
+
+```bash
+php artisan surgical:voucher-status --paper-high=130250
+```
+
+It exits non-zero if the next voucher would clash, names the value to put in
+`VOUCHER_START_NUMBER`, and lists any vouchers that already duplicate a paper
+number. Safe to run repeatedly; run it as a deploy gate.
+
+**2. Label reading on real packaging.** Barcode scanning (GS1 DataMatrix /
+Code 128) is deterministic and needs no configuration. The OCR fallback is only
+used for labels whose barcode won't decode, and its accuracy on foil, curved
+surfaces and 5pt type can only be judged against a real photo:
+
+```bash
+# Barcode parser — no API key, no cost
+php artisan surgical:test-label-ocr --barcode='(01)0345…(10)11129D250603(17)270603'
+
+# OCR fallback — needs ANTHROPIC_API_KEY, spends one request per label
+php artisan surgical:test-label-ocr storage/labels/circular.jpg
+```
+
+Both print what was extracted *and* how the catalogue lookup resolves it, so a
+failed GTIN/REF match is visible before it shows up as an unresolved scan.
 
 **Frontend**
 - `npm run build` → static `dist/` served by nginx/CDN (Dockerfile included).
@@ -210,15 +251,18 @@ Platform, etc.).
 
 ## Roadmap
 
-**MVP (built):** auth/RBAC, inventory + movement ledger, Transfer 1 & 2 with
+**MVP (built):** auth/RBAC, inventory + movement ledger, transfers with
 signatures + PDFs + email, stock counts + variance, hospitals/doctors/preference
 cards, approval centre, notifications, expiry/low-stock alerts, reports, Pastel
 CSV export, audit trail, offline sync, PWA.
 
+**Also built:** GS1 barcode + OCR label scanning for counts and delivery
+vouchers, automatic lot/stock adjustment detection with orange highlighting and
+admin alerts, the stock-count summary report, and the digitised Stock Movement /
+Delivery Voucher with a recipient signature that gates approval.
+
 **Next phases:**
-1. Barcode/QR scanning on mobile for stock picking and counts.
-2. OCR for photo-captured stock counts (auto-fill counted quantities).
-3. Consignment case tracking (scan products used in surgery → deduct → export).
-4. Real-time push (WebSockets) for approvals and alerts.
-5. Two-way Pastel/accounting integration; BI dashboards.
-6. SSO (Azure AD) and granular field-level audit diffing.
+1. Consignment case tracking (scan products used in surgery → deduct → export).
+2. Real-time push (WebSockets) for approvals and alerts.
+3. Two-way Pastel/accounting integration; BI dashboards.
+4. SSO (Azure AD) and granular field-level audit diffing.

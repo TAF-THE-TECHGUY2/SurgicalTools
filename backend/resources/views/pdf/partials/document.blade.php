@@ -3,131 +3,238 @@
     $isDelivery = $transfer->toLocation?->type === 'hospital';
     $fromName = $transfer->fromLocation?->name ?? \Illuminate\Support\Str::headline($transfer->from_location ?? 'Source');
     $toName = $transfer->toLocation?->name ?? \Illuminate\Support\Str::headline($transfer->to_location ?? 'Destination');
+
+    // "From JHB MSTR to Mike Oliver Boot" — the paper vouchers write the whole
+    // movement on the DELIVER TO line, so mirror that for internal moves and
+    // name the hospital directly for a delivery.
+    $deliverTo = $isDelivery ? $toName : "From {$fromName} to {$toName}";
+
+    $address = $transfer->delivery_address ?? $transfer->toLocation?->hospital?->address;
+
+    // The pad has a fixed number of ruled lines and blanks are struck through
+    // by hand. Padding to the same count keeps the printed copy recognisable
+    // as the same form.
+    $ruledLines = 12;
+    $blankLines = max(0, $ruledLines - $transfer->items->count());
+
+    $signatures = $transfer->signatures->keyBy('signer_role');
+    $recipientSig = $signatures['recipient'] ?? null;
+    $requesterSig = $signatures['requester'] ?? $transfer->signatures->first();
+
+    $embed = function ($signature) {
+        if (! $signature) {
+            return null;
+        }
+        $disk = \Illuminate\Support\Facades\Storage::disk(config('filesystems.default'));
+
+        return $disk->exists($signature->signature_path)
+            ? 'data:image/png;base64,'.base64_encode($disk->get($signature->signature_path))
+            : null;
+    };
 @endphp
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="utf-8">
+    @include('pdf.partials.styles')
     <style>
-        * { font-family: DejaVu Sans, sans-serif; }
-        body { color: #1f2937; font-size: 12px; margin: 0; }
-        .header { border-bottom: 3px solid #29A9E1; padding-bottom: 12px; margin-bottom: 18px; }
-        .brand { font-size: 20px; font-weight: bold; color: #1E3C8C; }
-        .doc-title { font-size: 16px; font-weight: bold; text-transform: uppercase; color: #111827; margin-top: 4px; }
-        .muted { color: #6b7280; }
-        .meta-table { width: 100%; margin-bottom: 18px; }
-        .meta-table td { vertical-align: top; padding: 2px 0; }
-        .label { color: #6b7280; font-size: 10px; text-transform: uppercase; letter-spacing: .04em; }
-        table.items { width: 100%; border-collapse: collapse; margin-top: 8px; }
-        table.items th { background: #1E3C8C; color: #fff; text-align: left; padding: 7px 8px; font-size: 10px; text-transform: uppercase; }
-        table.items td { padding: 7px 8px; border-bottom: 1px solid #e5e7eb; }
-        table.items tr:nth-child(even) td { background: #f9fafb; }
-        .totals { margin-top: 10px; text-align: right; font-weight: bold; }
-        .sign-box { margin-top: 36px; }
-        .sign-line { border-top: 1px solid #9ca3af; width: 240px; margin-top: 40px; padding-top: 4px; font-size: 10px; }
-        .sig-img { max-height: 70px; }
-        .footer { position: fixed; bottom: 0; left: 0; right: 0; font-size: 9px; color: #9ca3af; border-top: 1px solid #e5e7eb; padding-top: 6px; }
-        .pill { display: inline-block; background: #eff8fe; color: #1c4f8f; border: 1px solid #7ccbf5; border-radius: 9999px; padding: 2px 10px; font-size: 10px; }
+        /* The voucher is a ruled form, not a report: every cell is boxed, so
+           the digital copy files alongside the carbon copies. */
+        table.voucher { width: 100%; border-collapse: collapse; }
+        table.voucher td, table.voucher th { border: 1px solid #111827; padding: 4px 6px; }
+        .letterhead td { border: none; padding: 0; vertical-align: top; }
+        .co-name { font-size: 19px; font-weight: bold; }
+        .co-sub { font-size: 9px; letter-spacing: 1.2px; }
+        .co-detail { font-size: 8px; line-height: 1.45; text-align: right; }
+        .voucher-title { background: #111827; color: #fff; text-align: center;
+            font-size: 9.5px; font-weight: bold; text-transform: uppercase; line-height: 1.25; }
+        .voucher-number { text-align: center; font-size: 20px; font-weight: bold;
+            color: #c1121f; letter-spacing: 2px; padding: 3px 0; }
+        .cell-label { font-size: 7.5px; text-transform: uppercase; color: #374151; letter-spacing: .04em; }
+        .cell-value { font-size: 11px; }
+        .grid-head th { background: #f3f4f6; font-size: 8px; text-transform: uppercase;
+            text-align: left; letter-spacing: .04em; }
+        .grid-row td { height: 17px; font-size: 10px; }
+        .qty-col { width: 46px; text-align: center; }
+        .lot-col { width: 128px; }
+        .code-col { width: 92px; }
+        .adjust-row td { background: #FFF7ED; }
+        .adjust-flag { font-size: 7px; font-weight: bold; text-transform: uppercase;
+            color: #9A3412; letter-spacing: .04em; }
+        .sig-cell { height: 46px; }
+        .voucher-foot { font-size: 8px; color: #6b7280; margin-top: 8px; }
     </style>
 </head>
 <body>
-    <div class="header">
-        <table style="width:100%"><tr>
-            <td>
-                <div class="brand"><span style="color:#29A9E1">SURGICAL</span> <span style="color:#1E3C8C">DEVICES</span></div>
-                <div class="muted">Medical Device Inventory ERP</div>
-            </td>
-            <td style="text-align:right">
-                <div class="doc-title">{{ $isDelivery ? 'Delivery Note' : 'Transfer Note' }}</div>
-                <div class="muted">{{ $transfer->reference }}</div>
-                <div class="pill">{{ $fromName }} → {{ $toName }}</div>
-            </td>
-        </tr></table>
-    </div>
-
-    <table class="meta-table">
+    {{-- Letterhead: the pre-printed block at the top of the pad. --}}
+    <table class="letterhead" style="width:100%; margin-bottom:6px">
         <tr>
-            <td style="width:50%">
-                <div class="label">{{ $isDelivery ? 'Deliver To' : 'To' }}</div>
-                <div>
-                    {{ $toName }}<br>
-                    @if($transfer->toLocation?->hospital)
-                        <span class="muted">{{ $transfer->toLocation->hospital->address }}</span>
-                    @endif
+            <td style="width:42%">
+                <div class="co-name">
+                    <span style="color:#6b7280">SURGICAL</span> <span style="color:#111827">DEVICES</span>
+                </div>
+                <div class="co-sub">SOUTH AFRICA (PTY) LTD</div>
+            </td>
+            <td style="width:32%">
+                <div class="co-detail">
+                    <strong>HEAD OFFICE:</strong><br>
+                    1 Santoni House, 7 Sinembe Crescent<br>
+                    Sinembe Office Park, La Lucia Ridge<br>
+                    P.O. Box 573, Umhlanga Rocks, 4320<br>
+                    [Tel] 031 584 8086 [Fax] 0866 524 734<br>
+                    [Mail] info@surgicaldevices.co.za<br>
+                    Reg No.: 2024/443234/07<br>
+                    VAT No.: 4830320380
                 </div>
             </td>
-            <td style="width:50%">
-                <div class="label">From</div>
-                <div>{{ $fromName }}</div>
-                <div class="label" style="margin-top:8px">Requested by</div>
-                <div>{{ $transfer->requester?->name ?? '—' }}</div>
-                <div class="label" style="margin-top:8px">Date</div>
-                <div>{{ optional($transfer->completed_at ?? $transfer->created_at)->format('d M Y, H:i') }}</div>
+            <td style="width:26%; padding-left:8px">
+                <table class="voucher" style="width:100%">
+                    <tr>
+                        <td colspan="2" class="voucher-title">
+                            Stock Movement /<br>Delivery Voucher
+                        </td>
+                    </tr>
+                    <tr>
+                        <td colspan="2" class="voucher-number">
+                            {{ $transfer->voucher_number ?? $transfer->reference }}
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="width:50%">
+                            <span class="cell-label">Date</span><br>
+                            <span class="cell-value">
+                                {{ optional($transfer->transfer_date ?? $transfer->created_at)->format('d/m/Y') }}
+                            </span>
+                        </td>
+                        <td style="width:50%">
+                            <span class="cell-label">Invoice No.</span><br>
+                            <span class="cell-value">{{ $transfer->invoice_reference ?? '' }}</span>
+                        </td>
+                    </tr>
+                </table>
             </td>
         </tr>
     </table>
 
-    <table class="items">
+    {{-- Header rows, then the line grid: exactly the paper's columns. --}}
+    <table class="voucher">
+        <tr>
+            <td style="width:132px"><span class="cell-label">Deliver To</span></td>
+            <td colspan="3"><span class="cell-value">{{ $deliverTo }}</span></td>
+        </tr>
+        <tr>
+            <td><span class="cell-label">Address</span></td>
+            <td colspan="3"><span class="cell-value">{{ $address ?? '' }}</span></td>
+        </tr>
+        <tr>
+            <td><span class="cell-label">Contact Person</span></td>
+            <td colspan="3"><span class="cell-value">{{ $transfer->contact_person_name ?? '' }}</span></td>
+        </tr>
+    </table>
+
+    <table class="voucher" style="margin-top:-1px">
         <thead>
-            <tr>
-                <th>Cat No.</th>
+            <tr class="grid-head">
+                <th class="code-col">Code</th>
                 <th>Description</th>
-                <th>Serial No.</th>
-                <th>Lot No.</th>
-                <th>Expiry</th>
-                <th style="text-align:right">Qty</th>
+                <th class="lot-col">Lot No.</th>
+                <th class="qty-col">Qty</th>
             </tr>
         </thead>
         <tbody>
             @foreach($transfer->items as $item)
-                <tr>
+                <tr class="grid-row {{ $item->is_transfer_adjustment ? 'adjust-row' : '' }}">
                     <td>{{ $item->ref_code }}</td>
-                    <td>{{ $item->description }}</td>
-                    <td>{{ $item->serial_number ?? '—' }}</td>
-                    <td>{{ $item->lot_number ?? '—' }}</td>
-                    <td>{{ optional($item->expiry_date)->format('d M Y') ?? '—' }}</td>
-                    <td style="text-align:right">{{ $item->quantity }}</td>
+                    <td>
+                        {{ $item->description }}
+                        @if($item->is_transfer_adjustment)
+                            <span class="adjust-flag">
+                                · {{ \Illuminate\Support\Str::headline($item->adjustment_type ?? 'adjustment') }}
+                                @if($item->expected_lot_number)
+                                    (expected {{ $item->expected_lot_number }})
+                                @endif
+                            </span>
+                        @elseif($item->serial_number)
+                            <span class="muted" style="font-size:8px">· SN {{ $item->serial_number }}</span>
+                        @endif
+                    </td>
+                    <td>{{ $item->lot_number ?? '' }}</td>
+                    <td class="qty-col">x {{ $item->quantity }}</td>
                 </tr>
             @endforeach
+
+            {{-- Unused ruled lines, as on the pad. --}}
+            @for($i = 0; $i < $blankLines; $i++)
+                <tr class="grid-row"><td>&nbsp;</td><td></td><td></td><td class="qty-col"></td></tr>
+            @endfor
         </tbody>
     </table>
-    <div class="totals">Total units: {{ $transfer->items->sum('quantity') }}</div>
+
+    {{-- Recipient block: the bottom two rows of the pad. --}}
+    <table class="voucher" style="margin-top:-1px">
+        <tr>
+            <td style="width:132px"><span class="cell-label">Name of Recipient</span></td>
+            <td><span class="cell-value">{{ $transfer->recipient_name ?? '' }}</span></td>
+            <td style="width:120px"><span class="cell-label">Date Delivered</span></td>
+            <td style="width:110px">
+                <span class="cell-value">
+                    {{ optional($transfer->delivery_timestamp)->format('d/m/Y H:i') ?? '' }}
+                </span>
+            </td>
+        </tr>
+        <tr>
+            <td><span class="cell-label">Signature</span></td>
+            <td class="sig-cell" colspan="3">
+                @php $recipientData = $embed($recipientSig); @endphp
+                @if($recipientData)
+                    <img class="sig-img" style="max-height:40px" src="{{ $recipientData }}" alt="recipient signature">
+                @endif
+            </td>
+        </tr>
+    </table>
+
+    {{-- Not on the paper form: the internal audit trail the digital copy adds. --}}
+    <table style="width:100%; margin-top:10px">
+        <tr>
+            <td style="width:50%; vertical-align:top">
+                <span class="cell-label">Dispatched by</span><br>
+                @php $requesterData = $embed($requesterSig); @endphp
+                @if($requesterData)
+                    <img class="sig-img" style="max-height:34px" src="{{ $requesterData }}" alt="requester signature">
+                @endif
+                <div style="font-size:9px">
+                    {{ $requesterSig?->signer_name ?? $transfer->requester?->name ?? '—' }}
+                    @if($requesterSig)
+                        <br><span class="muted">{{ $requesterSig->signed_at->format('d M Y H:i') }}</span>
+                    @endif
+                </div>
+            </td>
+            <td style="width:50%; vertical-align:top">
+                <span class="cell-label">Approved by</span><br>
+                <div style="font-size:9px; margin-top:18px">
+                    {{ $transfer->approver?->name ?? 'Pending approval' }}
+                    @if($transfer->approved_at)
+                        <br><span class="muted">{{ $transfer->approved_at->format('d M Y H:i') }}</span>
+                    @endif
+                </div>
+            </td>
+        </tr>
+    </table>
 
     @if($transfer->notes)
-        <div style="margin-top:14px"><span class="label">Notes</span><br>{{ $transfer->notes }}</div>
+        <div class="voucher-foot"><strong>Notes:</strong> {{ $transfer->notes }}</div>
     @endif
 
-    <table class="sign-box" style="width:100%"><tr>
-        <td style="width:50%; vertical-align:bottom">
-            @php
-                $sig = $transfer->signatures->first();
-                $sigData = null;
-                if ($sig && \Illuminate\Support\Facades\Storage::disk(config('filesystems.default'))->exists($sig->signature_path)) {
-                    $bytes = \Illuminate\Support\Facades\Storage::disk(config('filesystems.default'))->get($sig->signature_path);
-                    $sigData = 'data:image/png;base64,'.base64_encode($bytes);
-                }
-            @endphp
-            @if($sig)
-                @if($sigData)<img class="sig-img" src="{{ $sigData }}" alt="signature">@endif
-                <div class="sign-line">
-                    {{ $sig->signer_name }}
-                    @if($sig->signer_role) — {{ \Illuminate\Support\Str::headline($sig->signer_role) }} @endif<br>
-                    <span class="muted">Signed {{ $sig->signed_at->format('d M Y H:i') }}</span>
-                </div>
-            @else
-                <div class="sign-line">Requested by</div>
-            @endif
-        </td>
-        <td style="width:50%; vertical-align:bottom">
-            <div class="sign-line">Approved by {{ $transfer->approver?->name ?? 'Surgical Devices' }}
-                @if($transfer->approved_at)<br><span class="muted">{{ $transfer->approved_at->format('d M Y H:i') }}</span>@endif
-            </div>
-        </td>
-    </tr></table>
+    <div class="voucher-foot">
+        {{ $isDelivery ? 'Delivery Note' : 'Stock Movement' }} · {{ $transfer->reference }} ·
+        {{ $fromName }} &rarr; {{ $toName }} ·
+        Total units {{ $transfer->items->sum('quantity') }} ·
+        Generated {{ now()->format('d M Y H:i') }}
+    </div>
 
     <div class="footer">
-        Surgical Devices ERP · {{ $transfer->reference }} · Generated {{ now()->format('d M Y H:i') }} ·
-        This is a system-generated document and forms part of the audit trail.
+        Surgical Devices South Africa (Pty) Ltd · {{ $transfer->voucher_number ?? $transfer->reference }} ·
+        System-generated document forming part of the audit trail.
     </div>
 </body>
 </html>

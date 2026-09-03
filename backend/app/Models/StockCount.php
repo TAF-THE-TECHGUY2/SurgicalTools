@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\MorphMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Spatie\Activitylog\Support\LogOptions;
 use Spatie\Activitylog\Models\Concerns\LogsActivity;
@@ -36,6 +37,23 @@ class StockCount extends Model
     public function items(): HasMany
     {
         return $this->hasMany(StockCountItem::class);
+    }
+
+    public function scans(): HasMany
+    {
+        return $this->hasMany(StockCountScan::class);
+    }
+
+    /** Generated summary reports and uploaded evidence. */
+    public function documents(): MorphMany
+    {
+        return $this->morphMany(Document::class, 'documentable');
+    }
+
+    /** The latest generated document of a given type, if any. */
+    public function document(string $type): ?Document
+    {
+        return $this->documents()->where('type', $type)->latest()->first();
     }
 
     public function hospital(): BelongsTo

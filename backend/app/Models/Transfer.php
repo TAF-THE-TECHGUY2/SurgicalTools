@@ -18,7 +18,10 @@ class Transfer extends Model
     use HasFactory, LogsActivity, SoftDeletes;
 
     protected $fillable = [
-        'reference', 'type', 'status', 'from_location', 'to_location',
+        'reference', 'voucher_number', 'transfer_date', 'invoice_reference',
+        'delivery_address', 'contact_person_name', 'recipient_name',
+        'delivery_timestamp',
+        'type', 'status', 'from_location', 'to_location',
         'from_location_id', 'to_location_id',
         'from_holder_user_id', 'to_holder_user_id', 'hospital_id', 'doctor_id',
         'hospital_stock_type', 'requested_by', 'approved_by', 'approved_at',
@@ -30,6 +33,8 @@ class Transfer extends Model
         'type'           => TransferType::class,
         'status'         => TransferStatus::class,
         'admin_override' => 'boolean',
+        'transfer_date'  => 'date',
+        'delivery_timestamp' => 'datetime',
         'approved_at'    => 'datetime',
         'reviewed_at'    => 'datetime',
         'rejected_at'    => 'datetime',
@@ -40,7 +45,8 @@ class Transfer extends Model
     public function getActivitylogOptions(): LogOptions
     {
         return LogOptions::defaults()
-            ->logOnly(['status', 'approved_by', 'reviewed_by', 'rejected_by', 'admin_override'])
+            ->logOnly(['status', 'approved_by', 'reviewed_by', 'rejected_by', 'admin_override',
+                'recipient_name', 'delivery_timestamp', 'invoice_reference'])
             ->logOnlyDirty()
             ->dontLogEmptyChanges();
     }

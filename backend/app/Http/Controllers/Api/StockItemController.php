@@ -142,6 +142,8 @@ class StockItemController extends Controller
             'name'             => ['required', 'string', 'max:255'],
             'catalogue_number' => ['nullable', 'string', 'max:100'],
             'item_code'        => ['nullable', 'string', 'max:100'],
+            // GS1 barcode identifier; also learned automatically on first confirmed scan.
+            'gtin'             => ['nullable', 'string', 'max:20'],
             'description'      => ['nullable', 'string'],
             'uom'              => ['nullable', 'string', 'max:30'],
             'unit_price'       => ['nullable', 'numeric', 'min:0'],

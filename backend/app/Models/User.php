@@ -21,7 +21,7 @@ class User extends Authenticatable
     public const SYSTEM_PERMISSIONS = [
         'inventory.view', 'inventory.manage',
         'transfer.view', 'transfer.create', 'transfer.approve', 'transfer.override', 'transfer.review',
-        'stock_count.capture', 'stock_count.review',
+        'stock_count.capture', 'stock_count.scan', 'stock_count.review',
         'hospital.view', 'hospital.manage',
         'doctor.view', 'doctor.manage',
         'location.manage',

@@ -15,6 +15,7 @@ use App\Http\Controllers\Api\NotificationController;
 use App\Http\Controllers\Api\PastelExportController;
 use App\Http\Controllers\Api\PreferenceCardController;
 use App\Http\Controllers\Api\ReportController;
+use App\Http\Controllers\Api\ScanController;
 use App\Http\Controllers\Api\StockCountController;
 use App\Http\Controllers\Api\StockItemController;
 use App\Http\Controllers\Api\SyncController;
@@ -61,6 +62,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/', [TransferController::class, 'index'])->name('index');
         Route::post('/', [TransferController::class, 'store'])->name('store');
         Route::get('{transfer}', [TransferController::class, 'show'])->name('show');
+        Route::post('{transfer}/sign-delivery', [TransferController::class, 'signDelivery'])->name('signDelivery');
         Route::post('{transfer}/approve', [TransferController::class, 'approve'])->name('approve');
         Route::post('{transfer}/reject', [TransferController::class, 'reject'])->name('reject');
         Route::get('{transfer}/pdf', [TransferController::class, 'downloadPdf'])->name('pdf');
@@ -74,7 +76,20 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('{stockCount}/submit', [StockCountController::class, 'submit'])->name('submit');
         Route::post('{stockCount}/photo', [StockCountController::class, 'uploadPhoto'])->name('photo');
         Route::post('{stockCount}/review', [StockCountController::class, 'review'])->name('review');
+
+        // Label scanning: barcode, vision fallback, or manual entry.
+        Route::post('{stockCount}/scan', [StockCountController::class, 'scan'])->name('scan');
+        Route::post('{stockCount}/scan/{scan}/confirm', [StockCountController::class, 'confirmScan'])->name('scan.confirm');
+        Route::delete('{stockCount}/lines/{item}', [StockCountController::class, 'destroyLine'])->name('lines.destroy');
     });
+
+    // Stateless label read — used where there is no record to scan into yet
+    // (building a delivery voucher before the transfer exists).
+    Route::post('scan/extract', [ScanController::class, 'extract'])->name('scan.extract');
+
+    // Offline scans sync as JSON; their label photo follows separately.
+    Route::post('stock-count-scans/{scan}/image', [StockCountController::class, 'attachScanImage'])
+        ->name('stock-counts.scan.image');
 
     // -- Hospitals & doctors ------------------------------------------------
     Route::apiResource('hospitals', HospitalController::class);

@@ -19,7 +19,11 @@ class StockCountResource extends JsonResource
             'hospital'       => new HospitalResource($this->whenLoaded('hospital')),
             'requester'      => new UserResource($this->whenLoaded('requester')),
             'assignee'       => new UserResource($this->whenLoaded('assignee')),
-            'items'          => $this->whenLoaded('items'),
+            'items'          => StockCountItemResource::collection($this->whenLoaded('items')),
+            'adjustment_count' => $this->when(
+                $this->relationLoaded('items'),
+                fn () => $this->items->where('is_adjustment', true)->count(),
+            ),
             'submitted_at'   => $this->submitted_at,
             'reviewed_at'    => $this->reviewed_at,
             'created_at'     => $this->created_at,

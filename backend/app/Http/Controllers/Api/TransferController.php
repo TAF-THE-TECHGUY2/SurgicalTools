@@ -62,10 +62,27 @@ class TransferController extends Controller
         $data = $request->validate([
             'from_location_id' => ['required', 'exists:locations,id'],
             'to_location_id'   => ['required', 'exists:locations,id', 'different:from_location_id'],
-            'unit_ids'         => ['required', 'array', 'min:1'],
+            // Units may be empty when everything on the voucher was scanned
+            // off-list; the service rejects a request with neither.
+            'unit_ids'         => ['nullable', 'array'],
             'unit_ids.*'       => ['integer', 'exists:device_units,id'],
             'signature'        => ['required', 'string'], // base64 PNG from the pad
             'notes'            => ['nullable', 'string', 'max:2000'],
+
+            // Voucher header.
+            'transfer_date'       => ['nullable', 'date'],
+            'invoice_reference'   => ['nullable', 'string', 'max:100'],
+            'delivery_address'    => ['nullable', 'string', 'max:2000'],
+            'contact_person_name' => ['nullable', 'string', 'max:255'],
+
+            // Scanned items the dispatch list did not authorise.
+            'scanned_adjustments'                       => ['nullable', 'array'],
+            'scanned_adjustments.*.ref_code'            => ['required', 'string', 'max:120'],
+            'scanned_adjustments.*.description'         => ['nullable', 'string', 'max:255'],
+            'scanned_adjustments.*.lot_number'          => ['nullable', 'string', 'max:120'],
+            'scanned_adjustments.*.expiry_date'         => ['nullable', 'date'],
+            'scanned_adjustments.*.expected_lot_number' => ['nullable', 'string', 'max:120'],
+            'scanned_adjustments.*.quantity'            => ['nullable', 'integer', 'min:1'],
         ]);
 
         abort_unless($request->user()->can('transfer.create'), 403);
@@ -75,14 +92,47 @@ class TransferController extends Controller
         $transfer = $this->service->request([
             'from_location_id' => $data['from_location_id'],
             'to_location_id'   => $data['to_location_id'],
-            'unit_ids'         => $data['unit_ids'],
+            'unit_ids'         => $data['unit_ids'] ?? [],
             'signature_path'   => $path,
             'signer_name'      => $request->user()->name,
             'ip_address'       => $request->ip(),
             'notes'            => $data['notes'] ?? null,
+
+            'transfer_date'       => $data['transfer_date'] ?? null,
+            'invoice_reference'   => $data['invoice_reference'] ?? null,
+            'delivery_address'    => $data['delivery_address'] ?? null,
+            'contact_person_name' => $data['contact_person_name'] ?? null,
+            'scanned_adjustments' => $data['scanned_adjustments'] ?? [],
         ], $request->user());
 
         return (new TransferResource($transfer))->response()->setStatusCode(201);
+    }
+
+    /**
+     * Capture the recipient's signature at handover — the voucher's NAME OF
+     * RECIPIENT / SIGNATURE / DATE DELIVERED block.
+     *
+     * Gated on the same authority as creating the transfer: whoever is making
+     * the delivery collects the signature.
+     */
+    public function signDelivery(Request $request, Transfer $transfer)
+    {
+        $this->authorize('view', $transfer);
+        abort_unless($request->user()->can('transfer.create') || $request->user()->isAdmin(), 403);
+
+        $data = $request->validate([
+            'recipient_name'     => ['required', 'string', 'max:255'],
+            'signature'          => ['required', 'string'],
+            'delivery_timestamp' => ['nullable', 'date'],
+            'invoice_reference'  => ['nullable', 'string', 'max:100'],
+        ]);
+
+        $transfer = $this->service->signDelivery($transfer, [
+            ...$data,
+            'ip_address' => $request->ip(),
+        ], $request->user());
+
+        return new TransferResource($transfer->load(['items', 'signatures', 'fromLocation', 'toLocation']));
     }
 
     /** Approve — moves the devices and completes the transfer. */
