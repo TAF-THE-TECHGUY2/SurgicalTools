@@ -61,7 +61,10 @@ class TransferController extends Controller
     {
         $data = $request->validate([
             'from_location_id' => ['required', 'exists:locations,id'],
-            'to_location_id'   => ['required', 'exists:locations,id', 'different:from_location_id'],
+            // Either pick a known destination, or describe an unlisted one.
+            'to_location_id'   => ['required_without:new_destination.name', 'nullable', 'exists:locations,id', 'different:from_location_id'],
+            'new_destination'          => ['nullable', 'array'],
+            'new_destination.name'     => ['required_without:to_location_id', 'nullable', 'string', 'max:255'],
             // Units may be empty when everything on the voucher was scanned
             // off-list; the service rejects a request with neither.
             'unit_ids'         => ['nullable', 'array'],
@@ -91,7 +94,8 @@ class TransferController extends Controller
 
         $transfer = $this->service->request([
             'from_location_id' => $data['from_location_id'],
-            'to_location_id'   => $data['to_location_id'],
+            'to_location_id'   => $data['to_location_id'] ?? null,
+            'new_destination'  => $data['new_destination'] ?? null,
             'unit_ids'         => $data['unit_ids'] ?? [],
             'signature_path'   => $path,
             'signer_name'      => $request->user()->name,

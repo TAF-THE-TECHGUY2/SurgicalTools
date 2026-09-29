@@ -34,6 +34,8 @@ export default function TransferCreatePage() {
   const [step, setStep] = useState(0)
   const [fromId, setFromId] = useState<number | null>(null)
   const [toId, setToId] = useState<number | null>(null)
+  // Destination typed in because the clinic isn't on the hospitals master.
+  const [newDestination, setNewDestination] = useState('')
   const [selected, setSelected] = useState<Map<number, DeviceUnit & { itemName: string }>>(new Map())
   const [adjustments, setAdjustments] = useState<TransferAdjustmentDraft[]>([])
   const [signature, setSignature] = useState('')
@@ -55,6 +57,7 @@ export default function TransferCreatePage() {
 
   const from = locations?.find((l) => l.id === fromId) ?? null
   const to = locations?.find((l) => l.id === toId) ?? null
+  const destinationName = to?.name ?? newDestination.trim()
 
   // Source inventory, loaded once for the picker and reused by the scanner so
   // a scan can be matched without a round trip per label.
@@ -117,24 +120,29 @@ export default function TransferCreatePage() {
 
   const selectTo = (id: number) => {
     setToId(id)
+    setNewDestination('')
     setStep(3)
   }
 
   const canNext = [
     fromId !== null,
     selected.size > 0 || adjustments.length > 0,
-    toId !== null,
+    toId !== null || newDestination.trim() !== '',
     true, // voucher header is all optional
     signature !== '',
   ][step]
 
   const submit = async () => {
-    if (!fromId || !toId || (selected.size === 0 && adjustments.length === 0) || !signature) return
+    const typed = newDestination.trim()
+    if (!fromId || (!toId && !typed) || (selected.size === 0 && adjustments.length === 0) || !signature) return
     setSubmitting(true)
 
     const payload = {
       from_location_id: fromId,
       to_location_id: toId,
+      // Only one of the two travels: a known location, or a typed name the
+      // server turns into an ad-hoc destination.
+      new_destination: toId ? null : { name: typed },
       unit_ids: [...selected.keys()],
       signature,
       notes: notes || null,
@@ -147,7 +155,7 @@ export default function TransferCreatePage() {
 
     try {
       if (!navigator.onLine) {
-        await enqueue('transfer.request', { ...payload, signer_name: user?.name }, `Transfer ${from?.name} → ${to?.name}`)
+        await enqueue('transfer.request', { ...payload, signer_name: user?.name }, `Transfer ${from?.name} → ${destinationName}`)
         toast.info('Saved offline — the request will sync when you reconnect.')
         navigate('/transfers')
         return
@@ -224,22 +232,67 @@ export default function TransferCreatePage() {
       )}
 
       {step === 2 && (
-        <LocationGrid
-          locations={(locations ?? []).filter((l) => l.id !== fromId)}
-          selectedId={toId}
-          onSelect={selectTo}
-          title="Where is it going?"
-        />
+        <>
+          <LocationGrid
+            locations={(locations ?? []).filter((l) => l.id !== fromId)}
+            selectedId={toId}
+            onSelect={selectTo}
+            title="Where is it going?"
+          />
+
+          <Card className="mt-4">
+            <CardBody>
+              <h4 className="font-semibold text-slate-800">Not listed? Enter details</h4>
+              <p className="mb-3 text-sm text-slate-500">
+                For a clinic or doctor that isn&apos;t on the hospitals list yet. The
+                delivery still needs the recipient&apos;s signature, and an admin can
+                link it to a proper hospital record afterwards.
+              </p>
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+                <div className="flex-1">
+                  <Field label="Destination name">
+                    <Input
+                      value={newDestination}
+                      onChange={(e) => { setNewDestination(e.target.value); setToId(null) }}
+                      placeholder="Kempton Day Clinic"
+                    />
+                  </Field>
+                </div>
+                <Button
+                  variant="outline"
+                  disabled={newDestination.trim() === ''}
+                  onClick={() => setStep(3)}
+                >
+                  Use this destination <ArrowRight className="h-4 w-4" />
+                </Button>
+              </div>
+              <p className="mt-2 text-xs text-slate-400">
+                You&apos;ll enter the address and contact person on the next step.
+              </p>
+            </CardBody>
+          </Card>
+        </>
       )}
 
       {step === 3 && (
         <Card>
           <CardBody className="grid gap-4 sm:grid-cols-2">
+            {!to && newDestination.trim() !== '' && (
+              <div className="sm:col-span-2 flex items-start gap-2 rounded-lg border-l-4 border-amber-400 bg-amber-50 px-3 py-2 text-sm">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+                <span className="text-amber-900">
+                  <strong>{newDestination.trim()}</strong> isn&apos;t on the hospitals
+                  list, so there&apos;s nothing to prefill — please enter the address
+                  and contact person yourself.
+                </span>
+              </div>
+            )}
+
             <div className="sm:col-span-2">
               <h3 className="font-semibold text-slate-800">Delivery voucher</h3>
               <p className="text-sm text-slate-500">
                 These print on the voucher. Address and contact are prefilled from
-                {' '}{to?.name ?? 'the destination'} — edit if this delivery differs.
+                {' '}{destinationName || 'the destination'} — edit if this delivery differs.
               </p>
             </div>
 
@@ -286,7 +339,7 @@ export default function TransferCreatePage() {
               <div className="mb-4 flex items-center gap-2 text-sm">
                 <Badge tone="teal">{from?.name}</Badge>
                 <ArrowRight className="h-4 w-4 text-slate-400" />
-                <Badge tone="blue">{to?.name}</Badge>
+                <Badge tone={to ? 'blue' : 'amber'}>{destinationName}</Badge>
               </div>
               <div className="overflow-x-auto rounded-lg border border-slate-100">
                 <table className="w-full text-xs">
@@ -357,7 +410,7 @@ export default function TransferCreatePage() {
               <Button className="mt-4 w-full" size="lg" disabled={!signature} loading={submitting} onClick={() => void submit()}>
                 <Send className="h-4 w-4" /> Request Transfer
               </Button>
-              {to?.type === 'hospital' ? (
+              {(to?.type === 'hospital' || (!to && newDestination.trim() !== '')) ? (
                 <p className="mt-2 text-center text-xs text-slate-400">
                   The recipient signs for this on delivery — the voucher cannot be
                   approved until they do.

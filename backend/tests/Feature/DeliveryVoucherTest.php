@@ -532,6 +532,135 @@ class DeliveryVoucherTest extends TestCase
     }
 
     /* ------------------------------------------------------------------ */
+    /*  Unlisted destinations — "Not listed? Enter details"                */
+    /* ------------------------------------------------------------------ */
+
+    /**
+     * A rep standing in a clinic that isn't on the hospitals master must still
+     * be able to raise the voucher.
+     */
+    public function test_an_unlisted_destination_is_created_from_what_the_rep_types(): void
+    {
+        $transfer = $this->service()->request([
+            'from_location_id' => $this->boot->id,
+            'to_location_id'   => null,
+            'new_destination'  => ['name' => 'Kempton Day Clinic'],
+            'unit_ids'         => $this->circular->units()->pluck('id')->take(1)->all(),
+            'signature_path'   => 'sig.png',
+            'signer_name'      => $this->rep->name,
+            'delivery_address' => '14 Monument Road, Kempton Park',
+        ], $this->rep);
+
+        $destination = $transfer->toLocation;
+
+        $this->assertSame('Kempton Day Clinic', $destination->name);
+        $this->assertTrue($destination->is_ad_hoc, 'flagged so an admin can link it later');
+        $this->assertNull($destination->hospital_id, 'not on the hospitals master');
+        // Typed as a hospital, so it still behaves like a delivery.
+        $this->assertSame('hospital', $destination->type);
+        $this->assertSame('14 Monument Road, Kempton Park', $transfer->delivery_address);
+    }
+
+    /** An unlisted delivery still needs the recipient's signature. */
+    public function test_an_unlisted_destination_still_requires_a_signature(): void
+    {
+        $transfer = $this->service()->request([
+            'from_location_id' => $this->boot->id,
+            'to_location_id'   => null,
+            'new_destination'  => ['name' => 'Kempton Day Clinic'],
+            'unit_ids'         => $this->circular->units()->pluck('id')->take(1)->all(),
+            'signature_path'   => 'sig.png',
+            'signer_name'      => $this->rep->name,
+        ], $this->rep);
+
+        $this->expectException(ValidationException::class);
+        $this->service()->approve($transfer->fresh(), $this->admin);
+    }
+
+    /** Repeat deliveries to the same unlisted clinic reuse one location. */
+    public function test_repeat_unlisted_deliveries_do_not_create_duplicates(): void
+    {
+        $units = $this->circular->units()->pluck('id')->all();
+
+        $make = fn (int $unitId, string $name) => $this->service()->request([
+            'from_location_id' => $this->boot->id,
+            'to_location_id'   => null,
+            'new_destination'  => ['name' => $name],
+            'unit_ids'         => [$unitId],
+            'signature_path'   => 'sig.png',
+            'signer_name'      => $this->rep->name,
+        ], $this->rep);
+
+        $first = $make($units[0], 'Kempton Day Clinic');
+        // Same clinic, different capitalisation and spacing.
+        $second = $make($units[1], '  kempton day clinic  ');
+
+        $this->assertSame($first->to_location_id, $second->to_location_id);
+        $this->assertSame(1, Location::where('name', 'Kempton Day Clinic')->count());
+    }
+
+    /** A typed name matching a real hospital reuses it rather than shadowing it. */
+    public function test_a_typed_name_matching_the_master_reuses_the_real_location(): void
+    {
+        $transfer = $this->service()->request([
+            'from_location_id' => $this->boot->id,
+            'to_location_id'   => null,
+            'new_destination'  => ['name' => 'Arwyp Medical Centre'],
+            'unit_ids'         => $this->circular->units()->pluck('id')->take(1)->all(),
+            'signature_path'   => 'sig.png',
+            'signer_name'      => $this->rep->name,
+        ], $this->rep);
+
+        $this->assertSame($this->hospitalLocation->id, $transfer->to_location_id);
+        $this->assertFalse($transfer->toLocation->is_ad_hoc);
+        // The real hospital's details still flow through.
+        $this->assertSame('20 Pine Avenue, Kempton Park, 1619', $transfer->delivery_address);
+    }
+
+    /** Neither a destination nor a name is still an error. */
+    public function test_a_voucher_needs_some_destination(): void
+    {
+        $this->expectException(ValidationException::class);
+        $this->service()->request([
+            'from_location_id' => $this->boot->id,
+            'to_location_id'   => null,
+            'new_destination'  => ['name' => '   '],
+            'unit_ids'         => $this->circular->units()->pluck('id')->take(1)->all(),
+            'signature_path'   => 'sig.png',
+            'signer_name'      => $this->rep->name,
+        ], $this->rep);
+    }
+
+    /** Over HTTP: one of the two must be supplied. */
+    public function test_http_requires_a_destination_or_a_name(): void
+    {
+        $this->actingAs($this->rep, 'sanctum')
+            ->postJson('/api/transfers', [
+                'from_location_id' => $this->boot->id,
+                'unit_ids'         => $this->circular->units()->pluck('id')->take(1)->all(),
+                'signature'        => base64_encode('sig'),
+            ])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('to_location_id');
+    }
+
+    /** Over HTTP: a typed destination is accepted without a location id. */
+    public function test_http_accepts_a_typed_destination(): void
+    {
+        $this->actingAs($this->rep, 'sanctum')
+            ->postJson('/api/transfers', [
+                'from_location_id' => $this->boot->id,
+                'new_destination'  => ['name' => 'Kempton Day Clinic'],
+                'unit_ids'         => $this->circular->units()->pluck('id')->take(1)->all(),
+                'signature'        => base64_encode('sig'),
+                'delivery_address' => '14 Monument Road',
+            ])
+            ->assertCreated()
+            ->assertJsonPath('data.to_location_entity.name', 'Kempton Day Clinic')
+            ->assertJsonPath('data.to_location_entity.is_ad_hoc', true);
+    }
+
+    /* ------------------------------------------------------------------ */
     /*  PDF + HTTP                                                         */
     /* ------------------------------------------------------------------ */
 

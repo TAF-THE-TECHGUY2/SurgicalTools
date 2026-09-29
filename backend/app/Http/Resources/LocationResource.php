@@ -18,6 +18,8 @@ class LocationResource extends JsonResource
             'hospital'    => new HospitalResource($this->whenLoaded('hospital')),
             'owner'       => new UserResource($this->whenLoaded('owner')),
             'is_active'   => $this->is_active,
+            // Created in the field; not on the hospitals master.
+            'is_ad_hoc'   => (bool) $this->is_ad_hoc,
             'units_count' => $this->whenCounted('units'),
             'created_at'  => $this->created_at,
         ];

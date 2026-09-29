@@ -20,10 +20,12 @@ class Location extends Model
 
     protected $fillable = [
         'name', 'code', 'type', 'hospital_id', 'owner_user_id', 'is_active',
+        'is_ad_hoc',
     ];
 
     protected $casts = [
         'is_active' => 'boolean',
+        'is_ad_hoc' => 'boolean',
     ];
 
     public function getActivitylogOptions(): LogOptions

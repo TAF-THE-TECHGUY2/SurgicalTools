@@ -43,10 +43,11 @@ class TransferService
     /**
      * Create a transfer request.
      *
-     * $data: from_location_id, to_location_id, unit_ids[], signature_path,
-     *        signer_name, ip_address?, notes?, invoice_reference?,
-     *        contact_person_name?, delivery_address?, transfer_date?,
-     *        scanned_adjustments?
+     * $data: from_location_id, unit_ids[], signature_path, signer_name,
+     *        ip_address?, notes?, invoice_reference?, contact_person_name?,
+     *        delivery_address?, transfer_date?, scanned_adjustments?, and
+     *        either to_location_id or new_destination{name} for a clinic that
+     *        is not on the hospitals master.
      *
      * `scanned_adjustments` carries items a scan turned up that the source's
      * authorised list does not hold — [{ref_code, description?, lot_number?,
@@ -59,7 +60,7 @@ class TransferService
     {
         return DB::transaction(function () use ($data, $requester) {
             $from = Location::findOrFail($data['from_location_id']);
-            $to = Location::findOrFail($data['to_location_id']);
+            $to = $this->resolveDestination($data);
 
             if ($from->id === $to->id) {
                 throw ValidationException::withMessages([
@@ -135,6 +136,47 @@ class TransferService
 
             return $transfer->fresh(['items', 'fromLocation', 'toLocation', 'signatures']);
         });
+    }
+
+    /**
+     * The delivery destination: a location from the master list, or one
+     * described by the rep because the clinic isn't on it yet.
+     *
+     * An unlisted destination is created rather than refused — a rep standing
+     * in a hospital with a box of stock has to be able to raise the voucher.
+     * It is typed `hospital`, so the delivery still produces a delivery note
+     * and still requires the recipient's signature, and flagged `is_ad_hoc` so
+     * an admin can link it to a proper Hospital afterwards.
+     *
+     * A name that already matches an existing location reuses it, so repeated
+     * deliveries to the same unlisted clinic don't sprout duplicates.
+     */
+    protected function resolveDestination(array $data): Location
+    {
+        if (filled($data['to_location_id'] ?? null)) {
+            return Location::findOrFail($data['to_location_id']);
+        }
+
+        $name = trim((string) ($data['new_destination']['name'] ?? ''));
+
+        if ($name === '') {
+            throw ValidationException::withMessages([
+                'to_location_id' => 'Choose a destination, or enter the details of one that is not listed.',
+            ]);
+        }
+
+        $existing = Location::whereRaw('LOWER(name) = ?', [mb_strtolower($name)])->first();
+
+        if ($existing) {
+            return $existing;
+        }
+
+        return Location::create([
+            'name'      => $name,
+            'type'      => 'hospital',
+            'is_active' => true,
+            'is_ad_hoc' => true,
+        ]);
     }
 
     /**
