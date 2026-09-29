@@ -127,6 +127,17 @@ Make sure port 443 is open in the security group.
 
 ## 5b. Upgrading an existing deployment
 
+From your machine, one command ships a branch, backs up Postgres first, keeps
+the HTTPS overlay, migrates (failing loudly) and smoke-tests the API:
+
+```bash
+./deploy/release.sh ubuntu@<ELASTIC_IP> -i ~/path/to/key.pem --branch feat/stock-count-signoff
+```
+
+It uses `git` on the server when the directory is a clone, otherwise it rsyncs
+your local checkout. Backups land in `~/backups` on the instance (last 10 kept).
+The manual equivalent follows.
+
 `deploy.sh` runs `migrate --force` on every deploy, which is all that's needed:
 the new `stock_count.scan` permission is granted by a migration rather than by
 re-seeding, so **role permissions customised in the Users screen are preserved**.
