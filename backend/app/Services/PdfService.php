@@ -63,6 +63,95 @@ class PdfService
         );
     }
 
+    /**
+     * The stock-count outputs of §3.5, by kind. The signed versions are
+     * stored at sign-off; the same views render on demand for printing,
+     * which for a count still in progress is a draft.
+     */
+    public const STOCK_COUNT_DOCUMENTS = [
+        'sheet' => [
+            'view' => 'pdf.stock-count-sheet', 'type' => 'stock_count_sheet',
+            'file' => 'count-sheet', 'orientation' => 'landscape',
+        ],
+        'variance' => [
+            'view' => 'pdf.stock-count-variance', 'type' => 'stock_count_variance',
+            'file' => 'variance-report', 'orientation' => 'portrait',
+        ],
+        'lot-adjustments' => [
+            'view' => 'pdf.stock-count-lot-adjustments', 'type' => 'stock_count_lot_adjustments',
+            'file' => 'lot-adjustments', 'orientation' => 'landscape',
+        ],
+    ];
+
+    /** Signed count sheet in the layout of the paper Inventory Count Listing. */
+    public function generateStockCountSheet(StockCount $count): Document
+    {
+        return $this->renderStockCountDocument($count, 'sheet');
+    }
+
+    /** Lines with a variance, valued at list/unit price, for the accounts department. */
+    public function generateStockCountVariance(StockCount $count): Document
+    {
+        return $this->renderStockCountDocument($count, 'variance');
+    }
+
+    /** New-lot and not-on-sheet lines beside the lot they displaced; null when there are none. */
+    public function generateStockCountLotAdjustments(StockCount $count): ?Document
+    {
+        $count->loadMissing('items');
+
+        if ($count->items->where('is_adjustment', true)->isEmpty()) {
+            return null;
+        }
+
+        return $this->renderStockCountDocument($count, 'lot-adjustments');
+    }
+
+    /** Render one stock-count output to bytes without storing it (print / draft). */
+    public function stockCountDocumentBytes(StockCount $count, string $kind): string
+    {
+        $spec = self::STOCK_COUNT_DOCUMENTS[$kind];
+
+        return Pdf::loadView($spec['view'], $this->stockCountViewData($count))
+            ->setPaper('a4', $spec['orientation'])
+            ->output();
+    }
+
+    public function stockCountFilename(StockCount $count, string $kind): string
+    {
+        return self::STOCK_COUNT_DOCUMENTS[$kind]['file']."-{$count->reference}.pdf";
+    }
+
+    protected function renderStockCountDocument(StockCount $count, string $kind): Document
+    {
+        $spec = self::STOCK_COUNT_DOCUMENTS[$kind];
+
+        return $this->render(
+            $count,
+            view: $spec['view'],
+            type: $spec['type'],
+            filename: $this->stockCountFilename($count, $kind),
+            viewData: $this->stockCountViewData($count),
+            orientation: $spec['orientation'],
+        );
+    }
+
+    /** @return array<string, mixed> */
+    protected function stockCountViewData(StockCount $count): array
+    {
+        $count->loadMissing([
+            'items.parentItem', 'items.stockItem', 'hospital', 'requester', 'assignee',
+            'locationEntity', 'signer',
+        ]);
+
+        $disk = Storage::disk(config('filesystems.default'));
+        $signature = $count->signature_path && $disk->exists($count->signature_path)
+            ? 'data:image/png;base64,'.base64_encode($disk->get($count->signature_path))
+            : null;
+
+        return ['count' => $count, 'signature' => $signature];
+    }
+
     protected function loadTransfer(Transfer $transfer): Transfer
     {
         return $transfer->loadMissing([
@@ -76,9 +165,15 @@ class PdfService
      *
      * @param  array<string, mixed>  $viewData
      */
-    protected function render(Model $owner, string $view, string $type, string $filename, array $viewData): Document
-    {
-        $pdf = Pdf::loadView($view, $viewData)->setPaper('a4');
+    protected function render(
+        Model $owner,
+        string $view,
+        string $type,
+        string $filename,
+        array $viewData,
+        string $orientation = 'portrait',
+    ): Document {
+        $pdf = Pdf::loadView($view, $viewData)->setPaper('a4', $orientation);
 
         $disk = config('filesystems.default');
         $folder = Str::plural(Str::snake(class_basename($owner)));

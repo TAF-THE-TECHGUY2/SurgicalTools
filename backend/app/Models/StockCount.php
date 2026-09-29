@@ -19,13 +19,15 @@ class StockCount extends Model
     protected $fillable = [
         'reference', 'status', 'location', 'location_id', 'hospital_id', 'holder_user_id',
         'requested_by', 'assigned_to', 'reviewed_by', 'submitted_at',
-        'reviewed_at', 'notes',
+        'reviewed_at', 'notes', 'signed_by', 'signed_by_name', 'signature_path',
+        'signed_at', 'signed_device',
     ];
 
     protected $casts = [
         'status'       => StockCountStatus::class,
         'submitted_at' => 'datetime',
         'reviewed_at'  => 'datetime',
+        'signed_at'    => 'datetime',
     ];
 
     public function getActivitylogOptions(): LogOptions
@@ -75,6 +77,17 @@ class StockCount extends Model
     public function assignee(): BelongsTo
     {
         return $this->belongsTo(User::class, 'assigned_to');
+    }
+
+    public function signer(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'signed_by');
+    }
+
+    /** Signed by the stock controller: no further scans, keys or minus-confirms. */
+    public function isLocked(): bool
+    {
+        return $this->signed_at !== null;
     }
 
     public function holder(): BelongsTo

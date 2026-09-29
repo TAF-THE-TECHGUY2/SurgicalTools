@@ -6,6 +6,7 @@ import {
   ShieldCheck,
 } from 'lucide-react'
 import { api, apiError } from '@/lib/api'
+import { openPdf, printPdf } from '@/lib/pdf'
 import { useAuth } from '@/auth/AuthContext'
 import { useToast } from '@/components/ToastProvider'
 import { PageHeader } from '@/components/ui/PageHeader'
@@ -89,34 +90,10 @@ export default function TransferDetailPage() {
     onError: (err) => toast.error(apiError(err)),
   })
 
-  /**
-   * dev-spec §5 print integration. The PDF is fetched as a blob and printed
-   * from a hidden same-origin iframe, which opens the native print dialog
-   * directly. iOS has no iframe print, so there it opens in a new tab where
-   * Share → Print reaches AirPrint.
-   */
+  /** dev-spec §5 print integration — see printPdf(). */
   const printVoucher = async () => {
     try {
-      const res = await api.get(`/transfers/${id}/pdf`, { responseType: 'blob' })
-      const url = URL.createObjectURL(res.data as Blob)
-
-      if (/iPad|iPhone|iPod/.test(navigator.userAgent)) {
-        window.open(url, '_blank')
-        toast.info('Tap Share → Print to send it to AirPrint.')
-        return
-      }
-
-      const frame = document.createElement('iframe')
-      frame.style.display = 'none'
-      frame.src = url
-      frame.onload = () => {
-        frame.contentWindow?.focus()
-        frame.contentWindow?.print()
-      }
-      document.body.appendChild(frame)
-
-      // Left in place while the dialog is open; the blob is released after.
-      window.setTimeout(() => { URL.revokeObjectURL(url); frame.remove() }, 60_000)
+      if (await printPdf(`/transfers/${id}/pdf`)) toast.info('Tap Share → Print to send it to AirPrint.')
     } catch (err) {
       toast.error(apiError(err))
     }
@@ -124,9 +101,7 @@ export default function TransferDetailPage() {
 
   const downloadPdf = async () => {
     try {
-      const res = await api.get(`/transfers/${id}/pdf`, { responseType: 'blob' })
-      const url = URL.createObjectURL(res.data as Blob)
-      window.open(url)
+      await openPdf(`/transfers/${id}/pdf`)
     } catch (err) {
       toast.error(apiError(err))
     }

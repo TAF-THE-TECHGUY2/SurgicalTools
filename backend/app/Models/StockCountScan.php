@@ -30,6 +30,9 @@ class StockCountScan extends Model
     /** Item resolved but nothing on the expected list to match it to. */
     public const UNRESOLVED = 'unresolved';
 
+    /** Product resolved, but no lot was read for a product the sheet tracks by lot. */
+    public const INCOMPLETE = 'incomplete';
+
     protected $fillable = [
         'stock_count_id', 'stock_count_item_id', 'stock_item_id', 'image_path',
         'source', 'raw_payload', 'extracted', 'confidence', 'match_result',
@@ -71,7 +74,7 @@ class StockCountScan extends Model
      */
     public function needsReview(): bool
     {
-        if ($this->match_result === self::UNRESOLVED) {
+        if (in_array($this->match_result, [self::UNRESOLVED, self::INCOMPLETE], true)) {
             return true;
         }
 

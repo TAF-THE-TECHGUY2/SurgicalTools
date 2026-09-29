@@ -152,5 +152,8 @@ return [
         'inventory_controller' => env('MAIL_INVENTORY_CONTROLLER_ADDRESS', 'inventory@surgicaldevices.example'),
         // dev-spec §5: every completed voucher is transmitted here.
         'transfers'            => env('MAIL_TRANSFERS_ADDRESS', 'transfers@surgicaldevices.co.za'),
+        // Stock-count variance reports. Admins can override this in the app
+        // (settings table); blank falls back to the office address.
+        'accounts'             => env('MAIL_ACCOUNTS_ADDRESS'),
     ],
 ];

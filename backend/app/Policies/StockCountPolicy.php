@@ -31,6 +31,11 @@ class StockCountPolicy
     /** The assigned rep captures the count; admins may capture too. */
     public function capture(User $user, StockCount $count): bool
     {
+        // Signed counts are locked (§3.5): nothing is captured after sign-off.
+        if ($count->isLocked()) {
+            return false;
+        }
+
         if ($user->isAdmin()) {
             return true;
         }
@@ -49,6 +54,15 @@ class StockCountPolicy
             return false;
         }
 
+        return $this->capture($user, $count);
+    }
+
+    /**
+     * Stock controller's sign-off. Same people as capture — the assigned
+     * counter, or an admin — but kept separate so the question reads plainly.
+     */
+    public function signOff(User $user, StockCount $count): bool
+    {
         return $this->capture($user, $count);
     }
 

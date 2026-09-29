@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\StockItemResource;
 use App\Models\StockItem;
+use App\Models\SupplierLabelTemplate;
 use App\Services\ScanExtractionService;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
@@ -34,7 +35,12 @@ class ScanController extends Controller
         $data = $request->validate([
             'barcode' => ['nullable', 'string', 'max:512'],
             'photo'   => ['nullable', 'image', 'mimes:jpeg,png,gif,webp', 'max:10240'],
+            'template_id' => ['nullable', 'integer', 'exists:supplier_label_templates,id'],
         ]);
+
+        $template = filled($data['template_id'] ?? null)
+            ? SupplierLabelTemplate::find($data['template_id'])
+            : null;
 
         if (blank($data['barcode'] ?? null) && ! $request->hasFile('photo')) {
             throw ValidationException::withMessages([
@@ -43,8 +49,8 @@ class ScanController extends Controller
         }
 
         $extracted = filled($data['barcode'] ?? null)
-            ? $this->fromBarcode($data['barcode'])
-            : $this->fromPhoto($request);
+            ? $this->fromBarcode($data['barcode'], $template)
+            : $this->fromPhoto($request, $template);
 
         $item = StockItem::resolveFromScan($extracted);
 
@@ -58,17 +64,17 @@ class ScanController extends Controller
     }
 
     /** @return array<string, mixed> */
-    protected function fromBarcode(string $barcode): array
+    protected function fromBarcode(string $barcode, ?SupplierLabelTemplate $template): array
     {
         try {
-            return $this->extraction->parseGs1($barcode);
+            return $this->extraction->readBarcode($barcode, $template);
         } catch (InvalidArgumentException $e) {
             throw ValidationException::withMessages(['barcode' => $e->getMessage()]);
         }
     }
 
     /** @return array<string, mixed> */
-    protected function fromPhoto(Request $request): array
+    protected function fromPhoto(Request $request, ?SupplierLabelTemplate $template): array
     {
         $file = $request->file('photo');
 
@@ -76,6 +82,7 @@ class ScanController extends Controller
             return $this->extraction->extractFromImage(
                 (string) file_get_contents($file->getRealPath()),
                 (string) $file->getMimeType(),
+                $template,
             );
         } catch (RuntimeException $e) {
             throw ValidationException::withMessages(['photo' => $e->getMessage()]);

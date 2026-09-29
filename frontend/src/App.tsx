@@ -11,6 +11,7 @@ import TransferCreatePage from '@/pages/transfers/TransferCreatePage'
 import TransferDetailPage from '@/pages/transfers/TransferDetailPage'
 import StockCountListPage from '@/pages/stock-counts/StockCountListPage'
 import StockCountDetailPage from '@/pages/stock-counts/StockCountDetailPage'
+import StockCountSettingsPage from '@/pages/stock-counts/StockCountSettingsPage'
 import HospitalListPage from '@/pages/hospitals/HospitalListPage'
 import HospitalDetailPage from '@/pages/hospitals/HospitalDetailPage'
 import DoctorListPage from '@/pages/doctors/DoctorListPage'
@@ -41,6 +42,7 @@ export default function App() {
           <Route path="/transfers/new" element={<TransferCreatePage />} />
           <Route path="/transfers/:id" element={<TransferDetailPage />} />
           <Route path="/stock-counts" element={<StockCountListPage />} />
+          <Route path="/stock-counts/settings" element={<StockCountSettingsPage />} />
           <Route path="/stock-counts/:id" element={<StockCountDetailPage />} />
           <Route path="/hospitals" element={<HospitalListPage />} />
           <Route path="/hospitals/:id" element={<HospitalDetailPage />} />

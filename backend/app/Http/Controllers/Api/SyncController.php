@@ -9,6 +9,7 @@ use App\Services\TransferService;
 use App\Support\SignatureStorage;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -18,7 +19,7 @@ use Illuminate\Support\Facades\Log;
  *
  * Supported operations:
  *   - transfer.request   (create a unit-level transfer request, incl. signature)
- *   - stock_count.submit (submit counted quantities)
+ *   - stock_count.submit (finish and sign a count, incl. signature)
  *   - stock_count.scan   (replay a label capture; the photo, if any, follows
  *                         separately via stock-count-scans/{scan}/image)
  */
@@ -105,9 +106,13 @@ class SyncController extends Controller
     protected function recordScan(array $payload, string $clientId, $user): int
     {
         $count = \App\Models\StockCount::findOrFail($payload['stock_count_id']);
+        Gate::forUser($user)->authorize('scan', $count);
 
         $extracted = isset($payload['barcode'])
-            ? app(\App\Services\ScanExtractionService::class)->parseGs1($payload['barcode'])
+            ? app(\App\Services\ScanExtractionService::class)->readBarcode(
+                $payload['barcode'],
+                isset($payload['template_id']) ? \App\Models\SupplierLabelTemplate::find($payload['template_id']) : null,
+            )
             : [
                 'ref'           => $payload['ref'] ?? null,
                 'gtin'          => $payload['gtin'] ?? null,
@@ -127,10 +132,29 @@ class SyncController extends Controller
         return $scan->id;
     }
 
+    /**
+     * Replay a sign-off made offline. The signature travels in the payload as
+     * a data-URI; a count already signed (a repeated replay) is a no-op.
+     */
     protected function submitCount(array $payload, $user): int
     {
         $count = \App\Models\StockCount::findOrFail($payload['stock_count_id']);
-        $this->counts->submit($count, $payload['lines'] ?? []);
+
+        if ($count->isLocked()) {
+            return $count->id;
+        }
+
+        Gate::forUser($user)->authorize('signOff', $count);
+
+        if (blank($payload['signature'] ?? null) || blank($payload['signed_by_name'] ?? null)) {
+            throw new \InvalidArgumentException('A stock count needs the stock controller\'s signature and name to finish.');
+        }
+
+        $this->counts->submit($count, $payload['lines'] ?? [], [
+            'signature' => $payload['signature'],
+            'name'      => $payload['signed_by_name'],
+            'device'    => $payload['device'] ?? null,
+        ], $user);
 
         return $count->id;
     }

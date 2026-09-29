@@ -15,6 +15,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Storage;
+use Tests\Concerns\SignsStockCounts;
 use Tests\TestCase;
 
 /**
@@ -24,7 +25,7 @@ use Tests\TestCase;
  */
 class StockCountLotSnapshotTest extends TestCase
 {
-    use RefreshDatabase;
+    use RefreshDatabase, SignsStockCounts;
 
     protected function setUp(): void
     {
@@ -180,7 +181,7 @@ class StockCountLotSnapshotTest extends TestCase
         $svc->submit($count, [
             ['id' => $early->id, 'counted_quantity' => 2],
             ['id' => $late->id, 'counted_quantity' => 1],
-        ]);
+        ], $this->signOff(), $admin);
         $svc->review($count->fresh(), $admin, 'approve');
 
         $missing = DeviceUnit::where('status', 'missing')->get();

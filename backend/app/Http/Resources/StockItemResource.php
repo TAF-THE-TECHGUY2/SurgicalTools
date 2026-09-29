@@ -14,6 +14,8 @@ class StockItemResource extends JsonResource
             'name'             => $this->name,
             'catalogue_number' => $this->catalogue_number,
             'item_code'        => $this->item_code,
+            'supplier'         => $this->supplier,
+            'product_group'    => $this->product_group,
             'gtin'             => $this->gtin,
             'description'      => $this->description,
             'uom'              => $this->uom,

@@ -24,6 +24,18 @@ class StockCountResource extends JsonResource
                 $this->relationLoaded('items'),
                 fn () => $this->items->where('is_adjustment', true)->count(),
             ),
+            'unresolved_count' => $this->when(
+                $this->relationLoaded('items'),
+                fn () => $this->items->where('is_adjustment', false)->reject->isResolved()->count(),
+            ),
+
+            // Sign-off (§3.5). Once signed the count is locked.
+            'locked'         => $this->isLocked(),
+            'signed_by_name' => $this->signed_by_name,
+            'signed_at'      => $this->signed_at,
+            'signed_device'  => $this->signed_device,
+            'signer'         => new UserResource($this->whenLoaded('signer')),
+
             'submitted_at'   => $this->submitted_at,
             'reviewed_at'    => $this->reviewed_at,
             'created_at'     => $this->created_at,

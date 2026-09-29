@@ -37,6 +37,10 @@ export interface StockItem {
   name: string
   catalogue_number?: string | null
   item_code?: string | null
+  /** Groups the stock-count sheet (DANNIK, FENGHM…). */
+  supplier?: string | null
+  /** Product group shown beside the warehouse on the sheet (LAP…). */
+  product_group?: string | null
   /** GS1 barcode identifier, learned on first confirmed scan. */
   gtin?: string | null
   description?: string | null
@@ -285,6 +289,12 @@ export interface StockCountItem {
   id: number
   stock_item_id?: number | null
   ref_code: string
+  /** Internal item code (F5LT…), snapshotted for the paper-layout sheet. */
+  item_code?: string | null
+  supplier?: string | null
+  product_group?: string | null
+  /** List/unit price at the time of the count. */
+  unit_price?: string | number | null
   description?: string | null
   lot_number?: string | null
   expiry_date?: string | null
@@ -292,6 +302,17 @@ export interface StockCountItem {
   scanned_quantity: number
   counted_quantity?: number | null
   variance?: number | null
+  /** Variance × list/unit price, in rand. */
+  variance_value?: number | null
+  /** The sheet's tick box: at least one unit found. */
+  ticked: boolean
+  /** Scanned, keyed or minus-confirmed — no longer blocks finishing. */
+  resolved: boolean
+  /** Rule 6: the counter confirmed none were found. */
+  not_found_at?: string | null
+  /** Units "Adjust lot" moved onto (new-lot line) or off (old-lot line) this line. */
+  lot_adjusted_quantity: number
+  lot_adjusted_at?: string | null
   /** Drives the orange row treatment. */
   is_adjustment: boolean
   adjustment_type?: StockCountAdjustmentType | null
@@ -314,10 +335,31 @@ export interface ScanExtraction {
   lot_number?: string | null
   expiry_date?: string | null
   serial_number?: string | null
+  /** The supplier label template that read it, if any. */
+  template_id?: number | null
 }
 
 export type ScanMatchResult =
-  | 'match' | 'unresolved' | StockCountAdjustmentType
+  | 'match' | 'unresolved' | 'incomplete' | StockCountAdjustmentType
+
+/** Admin-managed rules for reading one supplier's label. */
+export interface SupplierLabelTemplate {
+  id: number
+  supplier: string
+  name: string
+  barcode_type?: 'gs1' | 'code128' | 'datamatrix' | 'none' | null
+  match_pattern?: string | null
+  field_mappings?: Record<string, LabelFieldMapping> | null
+  ocr_hints?: string | null
+  is_active: boolean
+}
+
+export interface LabelFieldMapping {
+  source?: 'ai' | 'raw'
+  ai?: string
+  pattern?: string
+  date_format?: string
+}
 
 export interface StockCountScan {
   id: number
@@ -381,6 +423,14 @@ export interface StockCount {
   assignee?: User | null
   items?: StockCountItem[]
   adjustment_count?: number
+  /** Expected lines neither scanned, keyed nor minus-confirmed. */
+  unresolved_count?: number
+  /** Signed by the stock controller — no further edits. */
+  locked: boolean
+  signed_by_name?: string | null
+  signed_at?: string | null
+  signed_device?: string | null
+  signer?: User | null
   submitted_at?: string | null
   reviewed_at?: string | null
   created_at?: string

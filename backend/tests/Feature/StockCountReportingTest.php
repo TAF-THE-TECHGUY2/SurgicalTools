@@ -24,6 +24,7 @@ use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
+use Tests\Concerns\SignsStockCounts;
 use Tests\TestCase;
 
 /**
@@ -32,7 +33,7 @@ use Tests\TestCase;
  */
 class StockCountReportingTest extends TestCase
 {
-    use RefreshDatabase;
+    use RefreshDatabase, SignsStockCounts;
 
     protected User $admin;
 
@@ -244,7 +245,7 @@ class StockCountReportingTest extends TestCase
         $this->scan('11129D250603', expiry: '2027-06-03');
         $this->scan('11129D250603', expiry: '2027-06-03');
 
-        $count = app(StockCountService::class)->submit($this->count);
+        $count = app(StockCountService::class)->submit($this->count, [], $this->signOff(), $this->rep);
 
         $line = $count->items()->expected()->firstOrFail();
         $this->assertSame(2, $line->scanned_quantity);
@@ -263,7 +264,7 @@ class StockCountReportingTest extends TestCase
 
         $count = app(StockCountService::class)->submit($this->count, [
             ['id' => $line->id, 'counted_quantity' => 3],
-        ]);
+        ], $this->signOff(), $this->rep);
 
         $fresh = $count->items()->expected()->firstOrFail();
         $this->assertSame(1, $fresh->scanned_quantity);
@@ -271,17 +272,24 @@ class StockCountReportingTest extends TestCase
         $this->assertSame(0, $fresh->variance);
     }
 
-    /** Lines neither scanned nor keyed stay uncounted, with no variance. */
-    public function test_untouched_lines_stay_uncounted(): void
+    /** §3.4: a line neither scanned, keyed nor minus-confirmed blocks the finish. */
+    public function test_unresolved_lines_block_the_finish(): void
     {
         Notification::fake();
         Mail::fake();
 
-        $count = app(StockCountService::class)->submit($this->count);
+        try {
+            app(StockCountService::class)->submit($this->count, [], $this->signOff(), $this->rep);
+            $this->fail('An unresolved line must block the finish.');
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            $this->assertStringContainsString('12012029', $e->errors()['lines'][0]);
+        }
 
-        $line = $count->items()->expected()->firstOrFail();
+        $fresh = $this->count->fresh();
+        $this->assertSame('requested', $fresh->status->value);
+        $this->assertFalse($fresh->isLocked());
+        $line = $fresh->items()->expected()->firstOrFail();
         $this->assertNull($line->counted_quantity);
-        $this->assertNull($line->variance);
     }
 
     /** A fully-scanned count submits over HTTP without a lines payload. */
@@ -294,7 +302,17 @@ class StockCountReportingTest extends TestCase
 
         $this->actingAs($this->rep, 'sanctum')
             ->postJson("/api/stock-counts/{$this->count->id}/submit", [])
-            ->assertOk();
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['signature', 'signed_by_name']);
+
+        $this->actingAs($this->rep, 'sanctum')
+            ->postJson("/api/stock-counts/{$this->count->id}/submit", [
+                'signature'      => self::SIGNATURE_PNG,
+                'signed_by_name' => 'Mike Controller',
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.locked', true)
+            ->assertJsonPath('data.signed_by_name', 'Mike Controller');
 
         $this->assertSame('submitted', $this->count->fresh()->status->value);
     }
@@ -312,7 +330,7 @@ class StockCountReportingTest extends TestCase
         $this->scan('11129D250603', expiry: '2027-06-03');
         $this->scan('ROGUE-LOT'); // one orange line for the report to surface
 
-        app(StockCountService::class)->submit($this->count);
+        app(StockCountService::class)->submit($this->count, [], $this->signOff(), $this->rep);
 
         $doc = $this->count->document('stock_count_summary');
         $this->assertNotNull($doc);
@@ -354,7 +372,9 @@ class StockCountReportingTest extends TestCase
                 ->andThrow(new \RuntimeException('dompdf exploded'));
         });
 
-        app(StockCountService::class)->submit($this->count);
+        $this->scan('11129D250603', expiry: '2027-06-03');
+
+        app(StockCountService::class)->submit($this->count, [], $this->signOff(), $this->rep);
 
         $this->assertSame('submitted', $this->count->fresh()->status->value);
         $this->assertNull($this->count->document('stock_count_summary'));

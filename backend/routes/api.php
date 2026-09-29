@@ -17,6 +17,8 @@ use App\Http\Controllers\Api\PreferenceCardController;
 use App\Http\Controllers\Api\ReportController;
 use App\Http\Controllers\Api\ScanController;
 use App\Http\Controllers\Api\StockCountController;
+use App\Http\Controllers\Api\StockCountSettingsController;
+use App\Http\Controllers\Api\SupplierLabelTemplateController;
 use App\Http\Controllers\Api\StockItemController;
 use App\Http\Controllers\Api\SyncController;
 use App\Http\Controllers\Api\TransferController;
@@ -81,7 +83,20 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('{stockCount}/scan', [StockCountController::class, 'scan'])->name('scan');
         Route::post('{stockCount}/scan/{scan}/confirm', [StockCountController::class, 'confirmScan'])->name('scan.confirm');
         Route::delete('{stockCount}/lines/{item}', [StockCountController::class, 'destroyLine'])->name('lines.destroy');
+        Route::post('{stockCount}/lines/{item}/not-found', [StockCountController::class, 'markNotFound'])->name('lines.not-found');
+        Route::delete('{stockCount}/lines/{item}/not-found', [StockCountController::class, 'clearNotFound'])->name('lines.not-found.clear');
+        Route::post('{stockCount}/lines/{item}/adjust-lot', [StockCountController::class, 'adjustLot'])->name('lines.adjust-lot');
+        Route::get('{stockCount}/documents/{kind}', [StockCountController::class, 'document'])
+            ->whereIn('kind', ['sheet', 'variance', 'lot-adjustments'])->name('documents');
+        Route::post('{stockCount}/email-sheet', [StockCountController::class, 'emailSheet'])->name('email-sheet');
     });
+
+    // Supplier label templates (admin) and stock-count settings.
+    Route::post('label-templates/test', [SupplierLabelTemplateController::class, 'test'])->name('label-templates.test');
+    Route::apiResource('label-templates', SupplierLabelTemplateController::class)
+        ->parameters(['label-templates' => 'labelTemplate'])->except(['show']);
+    Route::get('settings/stock-counts', [StockCountSettingsController::class, 'show'])->name('settings.stock-counts');
+    Route::put('settings/stock-counts', [StockCountSettingsController::class, 'update'])->name('settings.stock-counts.update');
 
     // Stateless label read — used where there is no record to scan into yet
     // (building a delivery voucher before the transfer exists).

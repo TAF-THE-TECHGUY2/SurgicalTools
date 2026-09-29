@@ -16,11 +16,12 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Storage;
+use Tests\Concerns\SignsStockCounts;
 use Tests\TestCase;
 
 class InventoryIntegrityTest extends TestCase
 {
-    use RefreshDatabase;
+    use RefreshDatabase, SignsStockCounts;
 
     protected function setUp(): void
     {
@@ -99,7 +100,7 @@ class InventoryIntegrityTest extends TestCase
         $line = $count->items()->first();
         $this->assertSame(5, $line->expected_quantity);
 
-        $svc->submit($count, [['id' => $line->id, 'counted_quantity' => 3]]); // 2 missing
+        $svc->submit($count, [['id' => $line->id, 'counted_quantity' => 3]], $this->signOff(), $admin); // 2 missing
         $svc->review($count->fresh(), $admin, 'approve');
 
         $this->assertSame(3, DeviceUnit::where('location_id', $boot->id)->where('status', 'available')->count());

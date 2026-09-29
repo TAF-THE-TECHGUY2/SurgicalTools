@@ -10,6 +10,7 @@ use App\Models\StockItem;
 use App\Models\User;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 /**
  * The database cross-reference. Takes an extracted label triple, looks it up
@@ -44,7 +45,11 @@ class StockCountScanService
             // Serialise concurrent scanners on this count so two runners
             // working the same shelf cannot both increment the same line, or
             // both insert the same adjustment.
-            $count->newQuery()->whereKey($count->getKey())->lockForUpdate()->first();
+            $locked = $count->newQuery()->whereKey($count->getKey())->lockForUpdate()->first();
+
+            // Checked under the lock: an offline replay can arrive after the
+            // controller has already signed.
+            $this->assertOpen($locked ?? $count);
 
             $item = $this->resolveItem($extracted);
 
@@ -65,6 +70,18 @@ class StockCountScanService
             // scan as evidence and hand it back for manual entry — inventing a
             // line for an unknown product would corrupt the count.
             if (! $item) {
+                $scan->save();
+
+                return $scan;
+            }
+
+            // Known product but no lot read, while the sheet tracks this
+            // product by lot. Matching it would raise a bogus lot-mismatch
+            // line, so hold it for the lot to be typed or read off a second
+            // barcode.
+            if ($this->lotMissing($count, $item, $extracted)) {
+                $scan->stock_item_id = $item->id;
+                $scan->match_result = StockCountScan::INCOMPLETE;
                 $scan->save();
 
                 return $scan;
@@ -163,8 +180,7 @@ class StockCountScanService
 
         $line = $count->items()->create([
             'stock_item_id'       => $item->id,
-            'ref_code'            => $item->catalogue_number ?? $item->item_code ?? (string) $item->id,
-            'description'         => $item->name,
+            ...StockCountItem::catalogueColumns($item),
             'lot_number'          => $scannedLot,
             'expiry_date'         => $this->toDate($extracted['expiry_date'] ?? null),
             'expected_quantity'   => 0,
@@ -184,14 +200,48 @@ class StockCountScanService
         return $line;
     }
 
-    /** Increment a line's running scan tally. */
+    /**
+     * Increment a line's running scan tally. A unit turning up on a line the
+     * counter had minus-confirmed means "none found" was wrong: the
+     * confirmation is withdrawn so the scan tally counts again on submit.
+     */
     protected function tally(StockCountItem $line): void
     {
+        $withdrawNotFound = $line->not_found_at !== null;
+
         $line->forceFill([
             'scanned_quantity' => (int) $line->scanned_quantity + 1,
             'first_scanned_at' => $line->first_scanned_at ?? now(),
             'last_scanned_at'  => now(),
+            ...($withdrawNotFound ? [
+                'not_found_at'     => null,
+                'not_found_by'     => null,
+                'counted_quantity' => null,
+                'variance'         => null,
+            ] : []),
         ])->save();
+    }
+
+    protected function assertOpen(StockCount $count): void
+    {
+        if ($count->isLocked()) {
+            throw ValidationException::withMessages([
+                'stock_count' => "Stock count {$count->reference} is signed and locked.",
+            ]);
+        }
+    }
+
+    /** No lot on the read, but the sheet lists this product under one or more lots. */
+    protected function lotMissing(StockCount $count, StockItem $item, array $extracted): bool
+    {
+        if (StockCountItem::normalizeLot($extracted['lot_number'] ?? null) !== null) {
+            return false;
+        }
+
+        return $count->items()->expected()
+            ->where('stock_item_id', $item->id)
+            ->whereNotNull('lot_number')
+            ->exists();
     }
 
     /** Resolve the catalogue entry; the order lives on the model. */
@@ -244,6 +294,8 @@ class StockCountScanService
             'lot_number'    => $extracted['lot_number'] ?? null,
             'expiry_date'   => $extracted['expiry_date'] ?? null,
             'serial_number' => $extracted['serial_number'] ?? null,
+            // Which supplier template read it, for the audit trail.
+            'template_id'   => $extracted['template_id'] ?? null,
         ];
     }
 
@@ -275,6 +327,8 @@ class StockCountScanService
     public function confirm(StockCountScan $scan, array $corrected, User $user): StockCountScan
     {
         return DB::transaction(function () use ($scan, $corrected, $user) {
+            $this->assertOpen($scan->stockCount);
+
             $extracted = array_merge($scan->extracted ?? [], array_filter(
                 [
                     'ref'         => $corrected['ref'] ?? null,
@@ -300,6 +354,16 @@ class StockCountScanService
             // product resolves straight off the barcode.
             if (blank($item->gtin) && filled($extracted['gtin'] ?? null)) {
                 $item->update(['gtin' => $this->clean($extracted['gtin'])]);
+            }
+
+            if ($this->lotMissing($scan->stockCount, $item, $extracted)) {
+                $scan->update([
+                    'stock_item_id' => $item->id,
+                    'extracted'     => $this->evidence($extracted),
+                    'match_result'  => StockCountScan::INCOMPLETE,
+                ]);
+
+                return $scan->fresh();
             }
 
             [$line, $result] = $this->applyToLines($scan->stockCount, $item, $extracted, $user);

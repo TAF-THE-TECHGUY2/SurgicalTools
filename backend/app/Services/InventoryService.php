@@ -106,6 +106,69 @@ class InventoryService
         });
     }
 
+    /**
+     * Stock-count "Adjust lot": units recorded under one lot were physically
+     * found under another. Re-label up to $count available units of $fromLot at
+     * $location onto $toLot (oldest expiry first, the same order write-offs
+     * use) and ledger each one. Returns how many units were moved — fewer than
+     * asked when the old lot does not hold that many.
+     */
+    public function moveUnitsToLot(
+        StockItem $item,
+        Location $location,
+        ?string $fromLot,
+        string $toLot,
+        ?string $toExpiry,
+        int $count,
+        string $reason,
+        ?int $userId = null,
+        $reference = null,
+    ): int {
+        if ($count <= 0) {
+            return 0;
+        }
+
+        return DB::transaction(function () use ($item, $location, $fromLot, $toLot, $toExpiry, $count, $reason, $userId, $reference) {
+            $units = DeviceUnit::where('stock_item_id', $item->id)
+                ->where('location_id', $location->id)
+                ->where('status', DeviceUnitStatus::Available->value)
+                ->when(
+                    $fromLot !== null,
+                    fn ($q) => $q->where('lot_number', $fromLot),
+                    fn ($q) => $q->whereNull('lot_number'),
+                )
+                ->orderByRaw('expiry_date IS NULL, expiry_date ASC')
+                ->limit($count)
+                ->lockForUpdate()
+                ->get();
+
+            foreach ($units as $unit) {
+                $unit->update([
+                    'lot_number'  => $toLot,
+                    'expiry_date' => $toExpiry ?? $unit->expiry_date,
+                ]);
+
+                $this->log([
+                    'device_unit_id'   => $unit->id,
+                    'ref_code'         => $item->catalogue_number ?? (string) $item->id,
+                    'lot_number'       => $toLot,
+                    'quantity'         => 1,
+                    'movement_type'    => 'lot_adjustment',
+                    'from_location'    => $location->name,
+                    'from_location_id' => $location->id,
+                    'to_location'      => $location->name,
+                    'to_location_id'   => $location->id,
+                    'reference_type'   => $reference ? $reference::class : null,
+                    'reference_id'     => $reference?->id,
+                    'performed_by'     => $userId,
+                    'notes'            => $reason.' (lot '.($fromLot ?? 'none').' → '.$toLot.')',
+                ]);
+            }
+
+            return $units->count();
+        });
+    }
+
     /** Archive a single unit (damaged / used / removed) with a ledger entry. */
     public function archiveUnit(DeviceUnit $unit, string $reason, ?int $userId = null): void
     {

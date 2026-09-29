@@ -109,6 +109,11 @@ npm run dev                    # http://localhost:5173 (proxies /api → :8000)
 | Label scanning (GS1 barcode → OCR fallback) | `useBarcodeScanner`, `ScanSheet`, `ScanExtractionService`, `ClaudeVisionClient` |
 | Lot/stock adjustments (orange rows) | `StockCountScanService`, `StockCountAdjustmentType` |
 | Stock-count summary report | `PdfService::generateStockCountSummary` → emailed on submit |
+| Finish, minus-confirm, sign-off + lock | `StockCountService::markNotFound` / `submit`, `FinishCountModal` |
+| Signed count sheet (paper Inventory Count Listing layout) | `pdf/stock-count-sheet.blade.php` → stock controller |
+| Variance report (rand value) | `pdf/stock-count-variance.blade.php` → accounts (admin-set address) |
+| Lot adjustment report + "Adjust lot" | `StockCountService::adjustLot`, `InventoryService::moveUnitsToLot`, `LotAdjustmentsCard` |
+| Supplier label templates (admin, no release needed) | `SupplierLabelTemplate`, `ScanExtractionService::readBarcode`, `/stock-counts/settings` |
 | Delivery voucher (paper form, digitised) | `voucher_number`, `pdf/partials/document.blade.php`, `TransferScanSheet` |
 | Recipient signature at hand-over | `TransferService::signDelivery` → gates approval |
 | Hospitals / contacts / rep assignment | `Hospital`, `hospital_user` pivot |
@@ -220,6 +225,16 @@ php artisan surgical:test-label-ocr storage/labels/circular.jpg
 Both print what was extracted *and* how the catalogue lookup resolves it, so a
 failed GTIN/REF match is visible before it shows up as an unresolved scan.
 
+Barcodes are read through the **supplier label templates** (Stock Counts →
+Settings). Suppliers that bend GS1 — Waston puts the expiry under (11) and the
+lot inside the serial (21) — get a template mapping each field; the screen has a
+"Try it on a barcode" box, so a new supplier needs no code release. Waston and
+the Surgical Devices own-brand label ship as the first two templates.
+
+**3. Accounts address.** Signed-off counts email the variance report to the
+accounts department. Set it in Stock Counts → Settings, or `MAIL_ACCOUNTS_ADDRESS`;
+until either is set it falls back to `MAIL_OFFICE_ADDRESS`.
+
 **Frontend**
 - `npm run build` → static `dist/` served by nginx/CDN (Dockerfile included).
 - Point `/api` and `/storage` at the backend (see `frontend/docker/nginx.conf`),
@@ -259,7 +274,10 @@ CSV export, audit trail, offline sync, PWA.
 **Also built:** GS1 barcode + OCR label scanning for counts and delivery
 vouchers, automatic lot/stock adjustment detection with orange highlighting and
 admin alerts, the stock-count summary report, and the digitised Stock Movement /
-Delivery Voucher with a recipient signature that gates approval.
+Delivery Voucher with a recipient signature that gates approval. Stock counts
+finish the way the paper count does: minus-confirm unfound lines, the stock
+controller signs on screen and the count locks, then the signed sheet, the
+variance report and the lot adjustment report go out.
 
 **Next phases:**
 1. Consignment case tracking (scan products used in surgery → deduct → export).

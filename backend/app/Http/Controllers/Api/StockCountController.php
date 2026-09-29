@@ -9,11 +9,15 @@ use App\Http\Resources\StockCountScanResource;
 use App\Models\StockCount;
 use App\Models\StockCountItem;
 use App\Models\StockCountScan;
+use App\Models\SupplierLabelTemplate;
+use App\Services\NotificationService;
+use App\Services\PdfService;
 use App\Services\ScanExtractionService;
 use App\Services\StockCountScanService;
 use App\Services\StockCountService;
 use App\Support\SignatureStorage;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
@@ -23,6 +27,8 @@ class StockCountController extends Controller
         protected StockCountService $service,
         protected StockCountScanService $scans,
         protected ScanExtractionService $extraction,
+        protected PdfService $pdf,
+        protected NotificationService $notifications,
     ) {}
 
     public function index(Request $request)
@@ -48,7 +54,7 @@ class StockCountController extends Controller
         $this->authorize('view', $stockCount);
 
         return new StockCountResource(
-            $stockCount->load(['hospital', 'requester', 'assignee', 'items.inventoryItem', 'items.parentItem'])
+            $stockCount->load(['hospital', 'requester', 'assignee', 'signer', 'items.inventoryItem', 'items.parentItem', 'documents'])
         );
     }
 
@@ -68,10 +74,13 @@ class StockCountController extends Controller
         return (new StockCountResource($count))->response()->setStatusCode(201);
     }
 
-    /** Rep submits counted quantities. */
+    /**
+     * Finish and sign the count. Refused while any line is unresolved; on
+     * success the count locks and the signed outputs are sent.
+     */
     public function submit(Request $request, StockCount $stockCount)
     {
-        $this->authorize('capture', $stockCount);
+        $this->authorize('signOff', $stockCount);
 
         // Lines are optional: a count completed entirely by scanning has
         // nothing keyed, and the scan tallies are folded in on submit.
@@ -80,11 +89,102 @@ class StockCountController extends Controller
             'lines.*.id'               => ['required', 'integer', 'exists:stock_count_items,id'],
             'lines.*.counted_quantity' => ['required', 'integer', 'min:0'],
             'lines.*.notes'            => ['nullable', 'string'],
+            'signature'                => ['required', 'string', 'starts_with:data:image/png;base64,', 'max:2000000'],
+            'signed_by_name'           => ['required', 'string', 'max:255'],
+            'device'                   => ['nullable', 'string', 'max:255'],
         ]);
 
-        $count = $this->service->submit($stockCount, $data['lines'] ?? []);
+        $count = $this->service->submit($stockCount, $data['lines'] ?? [], [
+            'signature' => $data['signature'],
+            'name'      => $data['signed_by_name'],
+            'device'    => $data['device'] ?? $request->userAgent(),
+        ], $request->user());
 
-        return new StockCountResource($count);
+        return new StockCountResource($count->load(['hospital', 'requester', 'assignee']));
+    }
+
+    /** Rule 6: MINUS — none of this line were found. */
+    public function markNotFound(Request $request, StockCount $stockCount, StockCountItem $item)
+    {
+        $this->authorize('capture', $stockCount);
+        abort_unless($item->stock_count_id === $stockCount->id, 404);
+
+        $this->service->markNotFound($stockCount, $item, $request->user());
+
+        return new StockCountResource($stockCount->fresh(['items']));
+    }
+
+    /** Undo a MINUS tapped by mistake. */
+    public function clearNotFound(StockCount $stockCount, StockCountItem $item)
+    {
+        $this->authorize('capture', $stockCount);
+        abort_unless($item->stock_count_id === $stockCount->id, 404);
+
+        $this->service->clearNotFound($stockCount, $item);
+
+        return new StockCountResource($stockCount->fresh(['items']));
+    }
+
+    /**
+     * One of the §3.5 outputs as a PDF, shown inline so the browser can print
+     * it. A signed count serves the copy stored at sign-off — the record — and
+     * a count still open renders a draft on the spot.
+     */
+    public function document(Request $request, StockCount $stockCount, string $kind)
+    {
+        $this->authorize('view', $stockCount);
+        abort_unless(array_key_exists($kind, PdfService::STOCK_COUNT_DOCUMENTS), 404);
+
+        $filename = $this->pdf->stockCountFilename($stockCount, $kind);
+        $disposition = $request->boolean('download') ? 'attachment' : 'inline';
+
+        $stored = $stockCount->isLocked()
+            ? $stockCount->document(PdfService::STOCK_COUNT_DOCUMENTS[$kind]['type'])
+            : null;
+
+        $bytes = $stored && Storage::disk($stored->disk)->exists($stored->path)
+            ? Storage::disk($stored->disk)->get($stored->path)
+            : $this->pdf->stockCountDocumentBytes($stockCount, $kind);
+
+        return response($bytes, 200, [
+            'Content-Type'        => 'application/pdf',
+            'Content-Disposition' => "{$disposition}; filename=\"{$filename}\"",
+        ]);
+    }
+
+    /** Email the signed sheet to further addresses, e.g. the hospital contact. */
+    public function emailSheet(Request $request, StockCount $stockCount)
+    {
+        $this->authorize('view', $stockCount);
+
+        $data = $request->validate([
+            'emails'   => ['required', 'array', 'min:1', 'max:10'],
+            'emails.*' => ['required', 'email'],
+        ]);
+
+        if (! $stockCount->isLocked()) {
+            throw ValidationException::withMessages(['emails' => 'The sheet can be emailed once the count is signed.']);
+        }
+
+        $sheet = $stockCount->document('stock_count_sheet') ?? $this->pdf->generateStockCountSheet($stockCount);
+
+        $this->notifications->stockCountSheetTo($stockCount, $sheet, array_values(array_unique($data['emails'])));
+
+        return response()->json(['sent_to' => array_values(array_unique($data['emails']))]);
+    }
+
+    /** Lot adjustment report: move stock from the old lot onto the lot found. */
+    public function adjustLot(Request $request, StockCount $stockCount, StockCountItem $item)
+    {
+        $this->authorize('review', $stockCount);
+        abort_unless($item->stock_count_id === $stockCount->id, 404);
+
+        $line = $this->service->adjustLot($stockCount, $item, $request->user());
+
+        return response()->json([
+            'line'        => new StockCountItemResource($line),
+            'stock_count' => new StockCountResource($stockCount->fresh(['items'])),
+        ]);
     }
 
     /** Attach an evidence photo to a count line. */
@@ -125,6 +225,7 @@ class StockCountController extends Controller
             'lot_number'  => ['nullable', 'string', 'max:120'],
             'expiry_date' => ['nullable', 'date'],
             'client_id'   => ['nullable', 'string', 'max:64'],
+            'template_id' => ['nullable', 'integer', 'exists:supplier_label_templates,id'],
         ]);
 
         if (blank($data['barcode'] ?? null) && ! $request->hasFile('photo') && blank($data['ref'] ?? null) && blank($data['gtin'] ?? null)) {
@@ -153,9 +254,13 @@ class StockCountController extends Controller
      */
     protected function extract(Request $request, StockCount $stockCount, array $data): array
     {
+        $template = filled($data['template_id'] ?? null)
+            ? SupplierLabelTemplate::find($data['template_id'])
+            : null;
+
         if (filled($data['barcode'] ?? null)) {
             try {
-                $extracted = $this->extraction->parseGs1($data['barcode']);
+                $extracted = $this->extraction->readBarcode($data['barcode'], $template);
             } catch (\InvalidArgumentException $e) {
                 throw ValidationException::withMessages(['barcode' => $e->getMessage()]);
             }
@@ -174,6 +279,7 @@ class StockCountController extends Controller
                 $extracted = $this->extraction->extractFromImage(
                     (string) file_get_contents($file->getRealPath()),
                     (string) $file->getMimeType(),
+                    $template,
                 );
             } catch (\RuntimeException $e) {
                 throw ValidationException::withMessages(['photo' => $e->getMessage()]);

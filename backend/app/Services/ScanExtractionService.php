@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\SupplierLabelTemplate;
 use Illuminate\Support\Carbon;
 use InvalidArgumentException;
 
@@ -11,9 +12,10 @@ use InvalidArgumentException;
  *
  * Two paths, in order of preference:
  *
- *  1. parseGs1()        — GS1 Application Identifiers off a DataMatrix or
- *                         Code 128 barcode. Deterministic: no confidence
- *                         score, no misreads, works offline.
+ *  1. readBarcode()     — GS1 Application Identifiers off a DataMatrix or
+ *                         Code 128 barcode, read through the supplier's label
+ *                         template when one matches (parseGs1() is the plain
+ *                         GS1 reading). Deterministic: no confidence score.
  *  2. extractFromImage() — vision extraction, for labels whose barcode is
  *                         damaged, obscured or absent.
  *
@@ -61,14 +63,63 @@ class ScanExtractionService
             throw new InvalidArgumentException('Empty barcode payload.');
         }
 
-        $elements = str_contains($raw, '(')
-            ? $this->parseBracketed($raw)
-            : $this->parseRaw($raw);
+        $elements = $this->elements($raw);
 
         if ($elements === []) {
             throw new InvalidArgumentException('No GS1 application identifiers found in the barcode.');
         }
 
+        return $this->standardFields($elements, $raw);
+    }
+
+    /**
+     * Read a decoded barcode, applying the supplier's label template.
+     *
+     * The template is the one asked for, or else the first active template
+     * whose pattern recognises the text. Without one this is plain GS1. A
+     * template that reads from the raw text also accepts a non-GS1 barcode.
+     *
+     * @return array{ref: ?string, gtin: ?string, lot_number: ?string, expiry_date: ?string, serial_number: ?string, confidence: float, raw_text: string, template_id: ?int}
+     */
+    public function readBarcode(string $raw, ?SupplierLabelTemplate $template = null): array
+    {
+        $raw = trim($raw);
+
+        if ($raw === '') {
+            throw new InvalidArgumentException('Empty barcode payload.');
+        }
+
+        $template ??= SupplierLabelTemplate::forBarcode($raw);
+        $elements = $this->elements($raw);
+
+        if ($elements === [] && ! $template?->readsRawText()) {
+            throw new InvalidArgumentException('No GS1 application identifiers found in the barcode.');
+        }
+
+        $fields = $this->standardFields($elements, $raw);
+
+        foreach ($template?->field_mappings ?? [] as $field => $mapping) {
+            if (! in_array($field, SupplierLabelTemplate::FIELDS, true) || ! is_array($mapping)) {
+                continue;
+            }
+
+            $fields[$field] = $this->mapField($field, $mapping, $elements, $raw);
+        }
+
+        return [...$fields, 'template_id' => $template?->id];
+    }
+
+    /** @return array<string, string> */
+    protected function elements(string $raw): array
+    {
+        return str_contains($raw, '(')
+            ? $this->parseBracketed($raw)
+            : $this->parseRaw($raw);
+    }
+
+    /** The standard GS1 reading of a set of elements. */
+    protected function standardFields(array $elements, string $raw): array
+    {
         return [
             'ref'           => $elements['240'] ?? null,
             'gtin'          => $elements['01'] ?? null,
@@ -82,13 +133,79 @@ class ScanExtractionService
     }
 
     /**
+     * One template mapping: pick the source (a GS1 element or the raw text),
+     * narrow it with the pattern's first capture group, and normalise dates.
+     * A mapping that finds nothing yields null — never the standard reading,
+     * which the template exists to override (Waston's (11) is not a
+     * production date).
+     */
+    protected function mapField(string $field, array $mapping, array $elements, string $raw): ?string
+    {
+        $value = ($mapping['source'] ?? null) === 'raw'
+            ? $raw
+            : ($elements[(string) ($mapping['ai'] ?? '')] ?? null);
+
+        if ($value !== null && filled($mapping['pattern'] ?? null)) {
+            $value = @preg_match(SupplierLabelTemplate::delimit($mapping['pattern']), $value, $m)
+                ? ($m[1] ?? $m[0])
+                : null;
+        }
+
+        $value = $value === null ? null : (trim($value) === '' ? null : trim($value));
+
+        if ($field === 'expiry_date' && $value !== null) {
+            $format = $mapping['date_format']
+                ?? (($mapping['source'] ?? null) === 'raw' ? 'YYYY-MM-DD' : 'YYMMDD');
+
+            return $this->dateToIso($value, $format);
+        }
+
+        return $value;
+    }
+
+    /** Normalise a printed/encoded date to YYYY-MM-DD (the spec's storage format). */
+    protected function dateToIso(string $value, string $format): ?string
+    {
+        $digits = preg_replace('/\D/', '', $value) ?? '';
+
+        return match ($format) {
+            'YYMMDD'     => $this->gs1DateToIso(strlen($digits) === 6 ? $digits : null),
+            'YYYYMMDD', 'YYYY-MM-DD' => strlen($digits) === 8
+                ? $this->validDate((int) substr($digits, 0, 4), (int) substr($digits, 4, 2), (int) substr($digits, 6, 2))
+                : null,
+            'DD/MM/YYYY' => strlen($digits) === 8
+                ? $this->validDate((int) substr($digits, 4, 4), (int) substr($digits, 2, 2), (int) substr($digits, 0, 2))
+                : null,
+            // Month only: the last day of that month, as on the label reader.
+            'MM/YYYY'    => strlen($digits) === 6 && checkdate((int) substr($digits, 0, 2), 1, (int) substr($digits, 2, 4))
+                ? Carbon::create((int) substr($digits, 2, 4), (int) substr($digits, 0, 2), 1)->endOfMonth()->toDateString()
+                : null,
+            default      => null,
+        };
+    }
+
+    protected function validDate(int $y, int $m, int $d): ?string
+    {
+        return checkdate($m, $d, $y) ? sprintf('%04d-%02d-%02d', $y, $m, $d) : null;
+    }
+
+    /**
      * Vision fallback for a label with no readable barcode.
      *
      * @return array{ref: ?string, gtin: ?string, lot_number: ?string, expiry_date: ?string, serial_number: ?string, confidence: float, raw_text: string}
      */
-    public function extractFromImage(string $binary, string $mime): array
+    public function extractFromImage(string $binary, string $mime, ?SupplierLabelTemplate $template = null): array
     {
-        return $this->vision->extractLabel($binary, $mime);
+        // A chosen template's hints alone; otherwise every supplier's, labelled,
+        // so the reader applies the right one once it recognises the label.
+        $hints = $template
+            ? (filled($template->ocr_hints) ? "This is a {$template->supplier} label. ".trim($template->ocr_hints) : null)
+            : SupplierLabelTemplate::combinedHints();
+
+        return [
+            ...$this->vision->extractLabel($binary, $mime, $hints),
+            'template_id' => $template?->id,
+        ];
     }
 
     /** Is the vision path usable, or is only barcode scanning available? */

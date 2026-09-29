@@ -1,10 +1,11 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { Plus } from 'lucide-react'
+import { Plus, Settings } from 'lucide-react'
 import { api, apiError } from '@/lib/api'
 import { useMeta } from '@/hooks/useMeta'
 import { Can } from '@/auth/Can'
+import { useAuth } from '@/auth/AuthContext'
 import { useToast } from '@/components/ToastProvider'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { Card, CardBody } from '@/components/ui/Card'
@@ -20,6 +21,7 @@ import type { LocationEntity, Paginated, StockCount, User } from '@/types'
 
 export default function StockCountListPage() {
   const navigate = useNavigate()
+  const { isAdmin } = useAuth()
   const { data: meta } = useMeta()
   const [searchParams, setSearchParams] = useSearchParams()
   const [createOpen, setCreateOpen] = useState(false)
@@ -75,11 +77,18 @@ export default function StockCountListPage() {
         title="Stock Counts"
         description="Cycle counts and variance reviews across locations."
         actions={
-          <Can permission="stock_count.review">
-            <Button onClick={() => setCreateOpen(true)}>
-              <Plus className="h-4 w-4" /> New count request
-            </Button>
-          </Can>
+          <>
+            {isAdmin && (
+              <Button variant="outline" onClick={() => navigate('/stock-counts/settings')}>
+                <Settings className="h-4 w-4" /> Settings
+              </Button>
+            )}
+            <Can permission="stock_count.review">
+              <Button onClick={() => setCreateOpen(true)}>
+                <Plus className="h-4 w-4" /> New count request
+              </Button>
+            </Can>
+          </>
         }
       />
 

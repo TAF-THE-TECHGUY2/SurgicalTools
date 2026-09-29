@@ -212,6 +212,7 @@ export function MatchBadge({ result }: { result: string }) {
     unlisted_item: { label: 'Not on list', tone: 'amber' },
     expiry_mismatch: { label: 'Expiry mismatch', tone: 'amber' },
     unresolved: { label: 'Needs details', tone: 'gray' },
+    incomplete: { label: 'Needs lot', tone: 'gray' },
     exhausted: { label: 'None left', tone: 'amber' },
   }
 

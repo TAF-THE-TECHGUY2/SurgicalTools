@@ -45,7 +45,8 @@ class TestLabelOcr extends Command
         try {
             [$result, $source] = blank($barcode)
                 ? [$this->fromPhoto($extraction, $file), 'vision']
-                : [$extraction->parseGs1($barcode), 'barcode'];
+                // Through the supplier label templates, exactly as a scan is read.
+                : [$extraction->readBarcode($barcode), 'barcode'];
         } catch (Throwable $e) {
             $this->components->error($e->getMessage());
 

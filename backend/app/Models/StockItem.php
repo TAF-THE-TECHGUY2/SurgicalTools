@@ -16,7 +16,7 @@ class StockItem extends Model
     use HasFactory, LogsActivity, SoftDeletes;
 
     protected $fillable = [
-        'name', 'catalogue_number', 'item_code', 'gtin', 'description', 'uom',
+        'name', 'catalogue_number', 'item_code', 'supplier', 'product_group', 'gtin', 'description', 'uom',
         'unit_price', 'min_threshold', 'is_active',
     ];
 
@@ -83,7 +83,28 @@ class StockItem extends Model
         }
 
         return static::where('catalogue_number', $ref)->first()
-            ?? static::where('item_code', $ref)->first();
+            ?? static::where('item_code', $ref)->first()
+            ?? static::whereNormalizedCode($ref)->first();
+    }
+
+    /**
+     * Match a code ignoring case, spaces and hyphens: a label printing
+     * "533-005-925" must find a catalogue entry keyed "533005925", and an OCR
+     * pass that drops a hyphen must still resolve.
+     */
+    public function scopeWhereNormalizedCode(Builder $q, string $code): Builder
+    {
+        $normalized = preg_replace('/[\s\-]+/', '', mb_strtoupper(trim($code)));
+
+        if ($normalized === '') {
+            return $q->whereRaw('1 = 0');
+        }
+
+        $expr = fn (string $col) => "REPLACE(REPLACE(UPPER({$col}), '-', ''), ' ', '')";
+
+        return $q->where(fn ($w) => $w
+            ->whereRaw($expr('catalogue_number').' = ?', [$normalized])
+            ->orWhereRaw($expr('item_code').' = ?', [$normalized]));
     }
 
     /** Available (on-hand, not pending/missing) unit count across all locations. */

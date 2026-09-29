@@ -3,9 +3,11 @@
 namespace App\Services;
 
 use App\Jobs\SendStockCountDiscrepancyDigest;
+use App\Mail\StockCountDocumentsMail;
 use App\Mail\StockCountSummaryMail;
 use App\Mail\TransferDocumentMail;
 use App\Models\Document;
+use App\Models\Setting;
 use App\Models\StockCount;
 use App\Models\StockCountItem;
 use App\Models\StockItem;
@@ -198,6 +200,44 @@ class NotificationService
     {
         foreach ($this->adminEmails() as $email) {
             Mail::to($email)->queue(new StockCountSummaryMail($count, $pdf));
+        }
+    }
+
+    /** §3.5: the signed count sheet goes to the stock controller who signed it. */
+    public function stockCountSheetToController(StockCount $count, Document $sheet): void
+    {
+        $count->loadMissing(['signer', 'assignee']);
+
+        $emails = array_values(array_unique(array_filter([
+            $count->signer?->email,
+            $count->assignee?->email,
+        ])));
+
+        $this->stockCountSheetTo($count, $sheet, $emails, 'controller');
+    }
+
+    /** Send the signed sheet to any addresses — the app's "Email sheet" action. */
+    public function stockCountSheetTo(StockCount $count, Document $sheet, array $emails, string $audience = 'copy'): void
+    {
+        foreach ($emails as $email) {
+            Mail::to($email)->queue(new StockCountDocumentsMail($count, [$sheet], $audience));
+        }
+    }
+
+    /**
+     * §3.5: on sign-off the variance report, with the signed sheet, is mailed
+     * automatically to the accounts department. The address is admin-managed;
+     * an unconfigured install falls back to the office rather than dropping
+     * the report.
+     *
+     * @param  array<int, Document>  $documents
+     */
+    public function stockCountToAccounts(StockCount $count, array $documents): void
+    {
+        $emails = Setting::accountsEmails() ?: array_filter([config('surgical.notifications.office')]);
+
+        foreach ($emails as $email) {
+            Mail::to($email)->queue(new StockCountDocumentsMail($count, $documents, 'accounts'));
         }
     }
 

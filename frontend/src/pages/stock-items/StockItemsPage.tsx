@@ -328,7 +328,10 @@ function ItemFormModal({ open, item, onClose, onSaved }: {
 }) {
   const toast = useToast()
 
-  const blank = { name: '', catalogue_number: '', item_code: '', description: '', uom: '', unit_price: '', min_threshold: '' }
+  const blank = {
+    name: '', catalogue_number: '', item_code: '', supplier: '', product_group: '',
+    description: '', uom: '', unit_price: '', min_threshold: '',
+  }
   const [form, setForm] = useState(blank)
 
   // Create mode: optionally receive the first batch straight into a location
@@ -350,6 +353,8 @@ function ItemFormModal({ open, item, onClose, onSaved }: {
       name: item.name,
       catalogue_number: item.catalogue_number ?? '',
       item_code: item.item_code ?? '',
+      supplier: item.supplier ?? '',
+      product_group: item.product_group ?? '',
       description: item.description ?? '',
       uom: item.uom ?? '',
       unit_price: item.unit_price != null ? String(item.unit_price) : '',
@@ -367,6 +372,8 @@ function ItemFormModal({ open, item, onClose, onSaved }: {
         name: form.name,
         catalogue_number: form.catalogue_number || null,
         item_code: form.item_code || null,
+        supplier: form.supplier.trim() ? form.supplier.trim().toUpperCase() : null,
+        product_group: form.product_group.trim() ? form.product_group.trim().toUpperCase() : null,
         description: form.description || null,
         uom: form.uom || null,
         unit_price: form.unit_price === '' ? null : Number(form.unit_price),
@@ -410,6 +417,12 @@ function ItemFormModal({ open, item, onClose, onSaved }: {
         </Field>
         <Field label="REF" hint="Your internal reference code.">
           <Input value={form.item_code} onChange={set('item_code')} />
+        </Field>
+        <Field label="Supplier" hint="Groups the stock-count sheet, e.g. DANNIK.">
+          <Input value={form.supplier} onChange={set('supplier')} />
+        </Field>
+        <Field label="Product group" hint="Shown beside the warehouse on the count sheet, e.g. LAP.">
+          <Input value={form.product_group} onChange={set('product_group')} />
         </Field>
         {!item && (
           <Field label="Lot number" hint="Applied to the initial stock batch below.">

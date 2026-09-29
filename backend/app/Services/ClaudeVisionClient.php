@@ -36,7 +36,7 @@ class ClaudeVisionClient
     /**
      * @return array{ref: ?string, gtin: ?string, lot_number: ?string, expiry_date: ?string, serial_number: ?string, confidence: float, raw_text: string}
      */
-    public function extractLabel(string $binary, string $mime): array
+    public function extractLabel(string $binary, string $mime, ?string $supplierHints = null): array
     {
         if (! $this->isConfigured()) {
             throw new RuntimeException(
@@ -72,7 +72,12 @@ class ClaudeVisionClient
                             mediaType: $mime,
                         ),
                     ),
-                    TextBlockParam::with(text: 'Extract the label fields.'),
+                    // Supplier hints are admin-managed and vary per scan, so
+                    // they ride in the user turn and leave the cached system
+                    // prompt untouched.
+                    TextBlockParam::with(text: $supplierHints === null
+                        ? 'Extract the label fields.'
+                        : "Supplier label notes, apply whichever matches this label:\n{$supplierHints}\n\nExtract the label fields."),
                 ],
             )],
             outputConfig: OutputConfig::with(
@@ -154,6 +159,8 @@ class ClaudeVisionClient
         - ref: the manufacturer's catalogue or reference number, usually printed
           beside "REF" and sometimes marked with the ISO 15223 "REF" symbol.
           Report it exactly as printed, including any letters or punctuation.
+          A box labelled "Code" or "Item code" is the supplier's own code, not
+          the REF; report it as ref only when the label has no REF at all.
         - gtin: the 14-digit GTIN, if printed as digits near the barcode.
         - lot_number: the batch or lot code, beside "LOT" or the "LOT" symbol.
           Transcribe character by character. Do not tidy it, expand it, or drop
@@ -162,6 +169,8 @@ class ClaudeVisionClient
         - expiry_date: the use-by date, beside an hourglass symbol or "EXP", as
           an ISO 8601 date. Labels vary between YYYY-MM-DD, YYYY-MM and
           MM/YYYY; when only a month is given, use the last day of that month.
+          The date beside the factory symbol (a building outline) is the
+          manufacturing date — never report it as the expiry.
         - serial_number: the serial, beside "SN", if present.
 
         Rules:

@@ -142,6 +142,9 @@ class StockItemController extends Controller
             'name'             => ['required', 'string', 'max:255'],
             'catalogue_number' => ['nullable', 'string', 'max:100'],
             'item_code'        => ['nullable', 'string', 'max:100'],
+            // Groups the stock-count sheet (DANNIK, FENGHM…) and picks the label template.
+            'supplier'         => ['nullable', 'string', 'max:100'],
+            'product_group'    => ['nullable', 'string', 'max:50'],
             // GS1 barcode identifier; also learned automatically on first confirmed scan.
             'gtin'             => ['nullable', 'string', 'max:20'],
             'description'      => ['nullable', 'string'],
