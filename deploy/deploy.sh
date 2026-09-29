@@ -83,6 +83,18 @@ EOF
   echo "    (edit $ENV_FILE if you use a domain / HTTPS, then re-run)"
 fi
 
+# --- HTTPS overlay ---------------------------------------------------------
+# Once a site is on TLS, Caddy owns :80 and :443 and the frontend must not
+# publish :80 itself. Leaving the overlay out gives the frontend that port
+# back, it collides with Caddy, the frontend never starts and Caddy serves 502
+# to a site that was working a minute earlier. Detect it rather than rely on
+# whoever is deploying remembering.
+if { [ -f "$ENV_FILE" ] && grep -qE '^DOMAIN=.+' "$ENV_FILE"; } \
+   || docker ps --format '{{.Names}}' 2>/dev/null | grep -q caddy; then
+  COMPOSE+=(-f deploy/docker-compose.tls.yml)
+  echo "==> HTTPS detected — including the TLS overlay"
+fi
+
 # --- Build & start ---------------------------------------------------------
 echo "==> Building images and starting the stack"
 "${COMPOSE[@]}" up -d --build
@@ -125,8 +137,8 @@ echo "✅ Deployed. Open: $ADDR"
 echo "   Containers:"
 "${COMPOSE[@]}" ps
 echo ""
-echo "   Logs:    docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml logs -f backend"
-echo "   Stop:    docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml down"
+echo "   Logs:    ${COMPOSE[*]} logs -f backend"
+echo "   Stop:    ${COMPOSE[*]} down"
 if [ "$SEED" = true ]; then
   echo ""
   echo "   ⚠  Demo logins were seeded (password: password). Change/disable them"
