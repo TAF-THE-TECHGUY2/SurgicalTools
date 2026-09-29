@@ -12,6 +12,54 @@ use Illuminate\Support\Facades\DB;
  */
 class ReferenceGenerator
 {
+    /**
+     * Namespace for this class's advisory locks, so they cannot collide with
+     * any other advisory lock the application might take.
+     */
+    protected const LOCK_NAMESPACE = 21828;
+
+    /**
+     * Serialise sequence generation for the rest of the current transaction.
+     *
+     * `lockForUpdate()` locks the rows it reads — and before the first record
+     * exists there are no rows to lock, so two simultaneous "first ever"
+     * generations can compute the same number. The unique index stops a
+     * duplicate being persisted, but one request then dies on a constraint
+     * violation during what should be a routine write: on go-live day, of all
+     * days.
+     *
+     * A transaction-level advisory lock closes that window. It needs no extra
+     * infrastructure, and Postgres releases it when the transaction ends, so a
+     * worker that dies mid-request cannot leave it held. A cache-based lock
+     * would have made every transfer depend on the cache being healthy, which
+     * is a worse failure than the one being fixed.
+     *
+     * SQLite (dev and tests) admits a single writer at a time, so there is no
+     * equivalent gap to close there.
+     */
+    protected static function serialise(string $scope): void
+    {
+        if (DB::connection()->getDriverName() !== 'pgsql') {
+            return;
+        }
+
+        // Cast explicitly: PDO can present bindings untyped, and Postgres would
+        // then fail to resolve the int4 overload.
+        DB::statement('SELECT pg_advisory_xact_lock(?::int, ?::int)', [
+            self::LOCK_NAMESPACE,
+            self::lockKeyFor($scope),
+        ]);
+    }
+
+    /**
+     * A stable 32-bit key per sequence, so two different sequences do not
+     * queue behind one another. Seven hex digits keep it inside int4.
+     */
+    public static function lockKeyFor(string $scope): int
+    {
+        return (int) hexdec(substr(md5($scope), 0, 7));
+    }
+
     public static function next(string $modelClass, string $column, string $prefix): string
     {
         /** @var Model $instance */
@@ -20,6 +68,8 @@ class ReferenceGenerator
         $search = "{$prefix}-{$year}-";
 
         return DB::transaction(function () use ($instance, $column, $search, $prefix, $year) {
+            self::serialise($instance->getTable().'.'.$column);
+
             $last = $instance->newQuery()
                 ->withTrashed()
                 ->where($column, 'like', $search.'%')
@@ -51,6 +101,8 @@ class ReferenceGenerator
         $instance = new $modelClass;
 
         return DB::transaction(function () use ($instance, $column, $seed) {
+            self::serialise($instance->getTable().'.'.$column);
+
             // Filtered in PHP rather than SQL: a numeric MAX over a string
             // column needs a cast that differs between pgsql and sqlite, and
             // any hand-entered value that isn't purely digits has to be
