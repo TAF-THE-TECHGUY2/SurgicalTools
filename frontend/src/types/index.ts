@@ -241,6 +241,9 @@ export interface Transfer {
   delivery_address?: string | null
   contact_person_name?: string | null
   recipient_name?: string | null
+  /** Optional copy of the finished voucher, taken at hand-over. */
+  recipient_email?: string | null
+  copy_to_rep?: boolean
   delivery_timestamp?: string | null
   type: TransferType
   type_label?: string

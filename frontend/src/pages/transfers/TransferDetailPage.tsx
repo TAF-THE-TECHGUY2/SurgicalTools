@@ -2,7 +2,8 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useParams } from 'react-router-dom'
 import {
-  AlertTriangle, ArrowLeft, ArrowRight, Check, Download, FileText, PenLine, ShieldCheck,
+  AlertTriangle, ArrowLeft, ArrowRight, Check, Download, FileText, PenLine, Printer,
+  ShieldCheck,
 } from 'lucide-react'
 import { api, apiError } from '@/lib/api'
 import { useAuth } from '@/auth/AuthContext'
@@ -36,6 +37,10 @@ export default function TransferDetailPage() {
   const [recipientName, setRecipientName] = useState('')
   const [recipientSignature, setRecipientSignature] = useState('')
   const [invoiceRef, setInvoiceRef] = useState('')
+  // Optional distribution of the finished voucher, chosen while the recipient
+  // is present rather than later at approval.
+  const [recipientEmail, setRecipientEmail] = useState('')
+  const [copyToRep, setCopyToRep] = useState(true)
 
   const { data: transfer, isLoading, error } = useQuery({
     queryKey: ['transfers', id],
@@ -69,17 +74,53 @@ export default function TransferDetailPage() {
         recipient_name: recipientName,
         signature: recipientSignature,
         invoice_reference: invoiceRef || null,
+        recipient_email: recipientEmail || null,
+        copy_to_rep: copyToRep,
       })).data,
     onSuccess: () => {
       toast.success('Delivery signed — the voucher can now be approved.')
       setSignOpen(false)
       setRecipientName('')
       setRecipientSignature('')
+      setRecipientEmail('')
       void qc.invalidateQueries({ queryKey: ['transfers', id] })
       void qc.invalidateQueries({ queryKey: ['transfers'] })
     },
     onError: (err) => toast.error(apiError(err)),
   })
+
+  /**
+   * dev-spec §5 print integration. The PDF is fetched as a blob and printed
+   * from a hidden same-origin iframe, which opens the native print dialog
+   * directly. iOS has no iframe print, so there it opens in a new tab where
+   * Share → Print reaches AirPrint.
+   */
+  const printVoucher = async () => {
+    try {
+      const res = await api.get(`/transfers/${id}/pdf`, { responseType: 'blob' })
+      const url = URL.createObjectURL(res.data as Blob)
+
+      if (/iPad|iPhone|iPod/.test(navigator.userAgent)) {
+        window.open(url, '_blank')
+        toast.info('Tap Share → Print to send it to AirPrint.')
+        return
+      }
+
+      const frame = document.createElement('iframe')
+      frame.style.display = 'none'
+      frame.src = url
+      frame.onload = () => {
+        frame.contentWindow?.focus()
+        frame.contentWindow?.print()
+      }
+      document.body.appendChild(frame)
+
+      // Left in place while the dialog is open; the blob is released after.
+      window.setTimeout(() => { URL.revokeObjectURL(url); frame.remove() }, 60_000)
+    } catch (err) {
+      toast.error(apiError(err))
+    }
+  }
 
   const downloadPdf = async () => {
     try {
@@ -326,9 +367,12 @@ export default function TransferDetailPage() {
             </ul>
           )}
           {transfer.status === 'completed' ? (
-            <div>
+            <div className="flex flex-wrap gap-2">
               <Button variant="outline" onClick={() => void downloadPdf()}>
                 <Download className="h-4 w-4" /> Download PDF
+              </Button>
+              <Button variant="outline" onClick={() => void printVoucher()}>
+                <Printer className="h-4 w-4" /> Print voucher
               </Button>
             </div>
           ) : (
@@ -395,6 +439,38 @@ export default function TransferDetailPage() {
           <Field label="Signature" required>
             <SignaturePad onChange={setRecipientSignature} />
           </Field>
+
+          {/* dev-spec §5: who else gets the finished voucher. Asked here
+              because the recipient is present and can give an address. */}
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+            <p className="mb-2 text-sm font-medium text-slate-700">Send a copy of the voucher</p>
+
+            <Field
+              label="Recipient's email"
+              hint="Optional — they receive the signed PDF once it's approved."
+            >
+              <Input
+                type="email"
+                value={recipientEmail}
+                onChange={(e) => setRecipientEmail(e.target.value)}
+                placeholder="theatre@hospital.co.za"
+              />
+            </Field>
+
+            <label className="mt-3 flex items-center gap-2 text-sm text-slate-700">
+              <input
+                type="checkbox"
+                className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-200"
+                checked={copyToRep}
+                onChange={(e) => setCopyToRep(e.target.checked)}
+              />
+              Send a copy to me ({transfer.requester?.name ?? 'the requesting rep'})
+            </label>
+
+            <p className="mt-2 text-xs text-slate-400">
+              A copy always goes to the transfers mailbox for the records.
+            </p>
+          </div>
 
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={() => setSignOpen(false)}>

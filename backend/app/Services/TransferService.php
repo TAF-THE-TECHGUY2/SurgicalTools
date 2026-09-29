@@ -288,6 +288,10 @@ class TransferService
                 'recipient_name'     => $recipient,
                 'delivery_timestamp' => $signedAt,
                 'invoice_reference'  => $data['invoice_reference'] ?? $transfer->invoice_reference,
+                // dev-spec §5 optional distribution, chosen while the recipient
+                // is present. Honoured when the PDF is sent on approval.
+                'recipient_email'    => $data['recipient_email'] ?? $transfer->recipient_email,
+                'copy_to_rep'        => $data['copy_to_rep'] ?? $transfer->copy_to_rep ?? true,
             ]);
 
             return $transfer->fresh(['items', 'signatures', 'fromLocation', 'toLocation']);

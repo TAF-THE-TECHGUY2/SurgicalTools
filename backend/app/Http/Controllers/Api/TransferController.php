@@ -125,6 +125,9 @@ class TransferController extends Controller
             'signature'          => ['required', 'string'],
             'delivery_timestamp' => ['nullable', 'date'],
             'invoice_reference'  => ['nullable', 'string', 'max:100'],
+            // Optional distribution of the finished voucher (dev-spec §5).
+            'recipient_email'    => ['nullable', 'email', 'max:255'],
+            'copy_to_rep'        => ['nullable', 'boolean'],
         ]);
 
         $transfer = $this->service->signDelivery($transfer, [

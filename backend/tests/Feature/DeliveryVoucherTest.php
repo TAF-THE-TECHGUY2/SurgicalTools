@@ -9,6 +9,7 @@ use App\Models\Hospital;
 use App\Models\HospitalContact;
 use App\Models\Location;
 use App\Models\StockItem;
+use App\Mail\TransferDocumentMail;
 use App\Models\Transfer;
 use App\Models\User;
 use App\Notifications\TransferStatusNotification;
@@ -417,6 +418,117 @@ class DeliveryVoucherTest extends TestCase
 
         $this->expectException(ValidationException::class);
         $this->requestVoucher(['unit_ids' => [$unitId]]);
+    }
+
+    /* ------------------------------------------------------------------ */
+    /*  Distribution of the finished voucher (dev-spec §5)                 */
+    /* ------------------------------------------------------------------ */
+
+    protected function completeDelivery(array $signData = []): Transfer
+    {
+        $transfer = $this->requestVoucher();
+
+        $this->service()->signDelivery($transfer, array_merge([
+            'recipient_name' => 'Sister Dlamini',
+            'signature'      => base64_encode('png-bytes'),
+        ], $signData), $this->rep);
+
+        $this->service()->approve($transfer->fresh(), $this->admin);
+
+        return $transfer->fresh();
+    }
+
+    /** Every completed voucher reaches the transfers mailbox. */
+    public function test_voucher_always_goes_to_the_transfers_mailbox(): void
+    {
+        config(['surgical.notifications.transfers' => 'transfers@surgicaldevices.co.za']);
+
+        $this->completeDelivery();
+
+        Mail::assertQueued(
+            TransferDocumentMail::class,
+            fn (TransferDocumentMail $m) => $m->hasTo('transfers@surgicaldevices.co.za'),
+        );
+    }
+
+    /** Subject format: "Transfer Voucher #130234 - Arwyp Medical Centre". */
+    public function test_subject_uses_the_voucher_number_and_destination(): void
+    {
+        config(['surgical.voucher.start_number' => 140001]);
+
+        $this->completeDelivery();
+
+        Mail::assertQueued(
+            TransferDocumentMail::class,
+            fn (TransferDocumentMail $m) => $m->envelope()->subject
+                === 'Transfer Voucher #140001 - Arwyp Medical Centre',
+        );
+    }
+
+    /** A recipient address given at hand-over receives the PDF. */
+    public function test_recipient_copy_is_sent_when_an_address_is_given(): void
+    {
+        $transfer = $this->completeDelivery(['recipient_email' => 'theatre@arwyp.test']);
+
+        $this->assertSame('theatre@arwyp.test', $transfer->recipient_email);
+        Mail::assertQueued(
+            TransferDocumentMail::class,
+            fn (TransferDocumentMail $m) => $m->hasTo('theatre@arwyp.test'),
+        );
+    }
+
+    /** No address given — nobody extra is mailed. */
+    public function test_no_recipient_copy_without_an_address(): void
+    {
+        $this->completeDelivery();
+
+        Mail::assertNotQueued(
+            TransferDocumentMail::class,
+            fn (TransferDocumentMail $m) => $m->hasTo('theatre@arwyp.test'),
+        );
+    }
+
+    /** The rep gets a copy by default. */
+    public function test_rep_is_copied_by_default(): void
+    {
+        $this->completeDelivery();
+
+        Mail::assertQueued(
+            TransferDocumentMail::class,
+            fn (TransferDocumentMail $m) => $m->hasTo($this->rep->email),
+        );
+    }
+
+    /** Unticking the rep copy suppresses it, without affecting the mailbox. */
+    public function test_rep_copy_can_be_declined(): void
+    {
+        config(['surgical.notifications.transfers' => 'transfers@surgicaldevices.co.za']);
+
+        $this->completeDelivery(['copy_to_rep' => false]);
+
+        Mail::assertNotQueued(
+            TransferDocumentMail::class,
+            fn (TransferDocumentMail $m) => $m->hasTo($this->rep->email),
+        );
+        Mail::assertQueued(
+            TransferDocumentMail::class,
+            fn (TransferDocumentMail $m) => $m->hasTo('transfers@surgicaldevices.co.za'),
+        );
+    }
+
+    /** A malformed address is rejected rather than silently dropped. */
+    public function test_recipient_email_is_validated(): void
+    {
+        $transfer = $this->requestVoucher();
+
+        $this->actingAs($this->rep, 'sanctum')
+            ->postJson("/api/transfers/{$transfer->id}/sign-delivery", [
+                'recipient_name'  => 'Sister Dlamini',
+                'signature'       => base64_encode('png-bytes'),
+                'recipient_email' => 'not-an-address',
+            ])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('recipient_email');
     }
 
     /* ------------------------------------------------------------------ */

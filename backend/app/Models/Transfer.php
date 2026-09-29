@@ -20,7 +20,7 @@ class Transfer extends Model
     protected $fillable = [
         'reference', 'voucher_number', 'transfer_date', 'invoice_reference',
         'delivery_address', 'contact_person_name', 'recipient_name',
-        'delivery_timestamp',
+        'recipient_email', 'copy_to_rep', 'delivery_timestamp',
         'type', 'status', 'from_location', 'to_location',
         'from_location_id', 'to_location_id',
         'from_holder_user_id', 'to_holder_user_id', 'hospital_id', 'doctor_id',
@@ -34,6 +34,7 @@ class Transfer extends Model
         'status'         => TransferStatus::class,
         'admin_override' => 'boolean',
         'transfer_date'  => 'date',
+        'copy_to_rep'    => 'boolean',
         'delivery_timestamp' => 'datetime',
         'approved_at'    => 'datetime',
         'reviewed_at'    => 'datetime',

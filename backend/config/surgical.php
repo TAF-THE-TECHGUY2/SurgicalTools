@@ -150,5 +150,7 @@ return [
         'office'               => env('MAIL_OFFICE_ADDRESS', 'office@surgicaldevices.example'),
         'stock_controller'     => env('MAIL_STOCK_CONTROLLER_ADDRESS', 'stock@surgicaldevices.example'),
         'inventory_controller' => env('MAIL_INVENTORY_CONTROLLER_ADDRESS', 'inventory@surgicaldevices.example'),
+        // dev-spec §5: every completed voucher is transmitted here.
+        'transfers'            => env('MAIL_TRANSFERS_ADDRESS', 'transfers@surgicaldevices.co.za'),
     ],
 ];

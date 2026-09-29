@@ -22,12 +22,20 @@ class TransferDocumentMail extends Mailable
         public string $heading,
     ) {}
 
+    /**
+     * dev-spec §5 subject format: "Transfer Voucher #130234 - Arwyp Medical
+     * Centre". Falls back to the internal reference for records raised before
+     * voucher numbers existed.
+     */
     public function envelope(): Envelope
     {
-        $label = $this->transfer->type->label();
+        $number = $this->transfer->voucher_number ?? $this->transfer->reference;
+        $deliverTo = $this->transfer->toLocation?->name
+            ?? $this->transfer->hospital?->name
+            ?? 'Unspecified destination';
 
         return new Envelope(
-            subject: "{$label} {$this->transfer->reference} — {$this->heading}",
+            subject: "Transfer Voucher #{$number} - {$deliverTo}",
         );
     }
 

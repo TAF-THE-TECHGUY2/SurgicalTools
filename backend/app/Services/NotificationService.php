@@ -256,15 +256,32 @@ class NotificationService
         ])->get();
     }
 
-    /** Email addresses that receive the transfer/delivery-note PDF. */
+    /**
+     * Email addresses that receive the transfer/delivery-note PDF.
+     *
+     * dev-spec §5: the transfers mailbox always receives a copy. The rep's own
+     * copy and the recipient's are the two optional distributions, chosen at
+     * hand-over.
+     */
     protected function pdfRecipients(Transfer $transfer): array
     {
         $emails = [
+            // Primary recipient — every completed voucher lands here.
+            config('surgical.notifications.transfers'),
             config('surgical.notifications.office'),
             config('surgical.notifications.stock_controller'),
             config('surgical.notifications.inventory_controller'),
-            $transfer->requester?->email,
         ];
+
+        // "Send copy to Representative Email" — the rep who raised it.
+        if ($transfer->copy_to_rep ?? true) {
+            $emails[] = $transfer->requester?->email;
+        }
+
+        // "Send copy to Recipient Email" — typed in when they signed.
+        if (filled($transfer->recipient_email)) {
+            $emails[] = $transfer->recipient_email;
+        }
 
         foreach ($this->locationUsers($transfer->to_location_id) as $user) {
             $emails[] = $user->email;

@@ -18,6 +18,8 @@ class TransferResource extends JsonResource
             'delivery_address'    => $this->delivery_address,
             'contact_person_name' => $this->contact_person_name,
             'recipient_name'      => $this->recipient_name,
+            'recipient_email'     => $this->recipient_email,
+            'copy_to_rep'         => (bool) ($this->copy_to_rep ?? true),
             'delivery_timestamp'  => $this->delivery_timestamp,
             'type'                => $this->type?->value,
             'type_label'          => $this->type?->label(),
