@@ -103,21 +103,54 @@ class ReferenceGenerator
         return DB::transaction(function () use ($instance, $column, $seed) {
             self::serialise($instance->getTable().'.'.$column);
 
-            // Filtered in PHP rather than SQL: a numeric MAX over a string
-            // column needs a cast that differs between pgsql and sqlite, and
-            // any hand-entered value that isn't purely digits has to be
-            // skipped rather than cast to 0.
-            $highest = (int) $instance->newQuery()
-                ->withTrashed()
-                ->whereNotNull($column)
-                ->lockForUpdate()
-                ->get([$column])
-                ->map(fn ($row) => (string) $row->{$column})
-                ->filter(fn (string $value) => ctype_digit($value))
-                ->map(fn (string $value) => (int) $value)
-                ->max() ?? 0;
-
-            return (string) max($seed, $highest + 1);
+            return (string) max($seed, self::highestSerial($instance, $column, lock: true) + 1);
         });
+    }
+
+    /**
+     * The number nextSerial() *would* return, without taking a lock or opening
+     * a transaction.
+     *
+     * The voucher form shows its number while the rep fills it in, the way the
+     * pad has it pre-printed at the top (dev-spec §2 step 1). That display must
+     * not consume a number: a rep who opens the form and backs out would
+     * otherwise punch a hole in an audit sequence that a medical device
+     * regulator expects to run unbroken.
+     *
+     * So this is advisory only. It can go stale the instant another rep
+     * submits, which is why the caller is expected to label it as provisional
+     * and why the real number is still allocated under lock on submit.
+     */
+    public static function peekSerial(string $modelClass, string $column, int $seed): string
+    {
+        /** @var Model $instance */
+        $instance = new $modelClass;
+
+        return (string) max($seed, self::highestSerial($instance, $column, lock: false) + 1);
+    }
+
+    /**
+     * Highest purely-numeric value in $column.
+     *
+     * Filtered in PHP rather than SQL: a numeric MAX over a string column needs
+     * a cast that differs between pgsql and sqlite, and any hand-entered value
+     * that isn't purely digits has to be skipped rather than cast to 0.
+     */
+    protected static function highestSerial(Model $instance, string $column, bool $lock): int
+    {
+        $query = $instance->newQuery()
+            ->withTrashed()
+            ->whereNotNull($column);
+
+        if ($lock) {
+            $query->lockForUpdate();
+        }
+
+        return (int) $query
+            ->get([$column])
+            ->map(fn ($row) => (string) $row->{$column})
+            ->filter(fn (string $value) => ctype_digit($value))
+            ->map(fn (string $value) => (int) $value)
+            ->max() ?? 0;
     }
 }

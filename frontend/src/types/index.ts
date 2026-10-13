@@ -66,6 +66,13 @@ export interface DeviceUnit {
   stock_item?: StockItem | null
 }
 
+/**
+ * A unit picked for a transfer, carrying the catalogue identity its own record
+ * does not hold. The voucher grid needs both: CODE is the catalogue number and
+ * DESCRIPTION is the product name, and a DeviceUnit knows only its stock_item_id.
+ */
+export type SelectedUnit = DeviceUnit & { itemName: string; itemCode: string }
+
 /** Grouped inventory row at a location: an item with its expandable units. */
 export interface GroupedStockRow {
   stock_item_id: number

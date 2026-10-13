@@ -7,10 +7,17 @@ export function AppLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
 
   return (
-    <div className="flex h-screen overflow-hidden bg-surface">
-      <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+    /* `print-root` lets @media print drop the chrome and reflow the page
+       content onto paper, so Ctrl-P on a voucher prints the voucher rather
+       than a screenshot of the application. */
+    <div className="print-root flex h-screen overflow-hidden bg-surface">
+      <div className="no-print contents">
+        <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+      </div>
       <div className="flex flex-1 flex-col overflow-hidden">
-        <Topbar onMenu={() => setSidebarOpen(true)} />
+        <div className="no-print contents">
+          <Topbar onMenu={() => setSidebarOpen(true)} />
+        </div>
         <main className="flex-1 overflow-y-auto px-4 py-6 sm:px-6 lg:px-8">
           <div className="mx-auto max-w-7xl">
             <Outlet />

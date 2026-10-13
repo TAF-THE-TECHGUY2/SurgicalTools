@@ -77,6 +77,17 @@ class TransferService
             }
 
             $contact = $this->hospitalContact($to);
+            $address = $data['delivery_address'] ?? $to->hospital?->address;
+
+            // dev-spec §4 makes Address a required field. Applied to deliveries
+            // only — a hospital, clinic or doctor the voucher is handed to —
+            // because an internal move between two of our own warehouses is
+            // addressed by the location name and has no street to give.
+            if ($this->isDelivery($to) && blank($address)) {
+                throw ValidationException::withMessages([
+                    'delivery_address' => "A delivery address is required before this voucher can be signed. {$to->name} has none on file, so please type it on the voucher.",
+                ]);
+            }
 
             $transfer = Transfer::create([
                 'reference'      => ReferenceGenerator::next(Transfer::class, 'reference', 'TR'),
@@ -96,7 +107,7 @@ class TransferService
                 // where a past delivery went.
                 'transfer_date'       => $data['transfer_date'] ?? now()->toDateString(),
                 'invoice_reference'   => $data['invoice_reference'] ?? null,
-                'delivery_address'    => $data['delivery_address'] ?? $to->hospital?->address,
+                'delivery_address'    => $address,
                 'contact_person_name' => $data['contact_person_name'] ?? $contact?->name,
             ]);
 
@@ -269,6 +280,19 @@ class TransferService
 
             $this->notifications->transferDiscrepancy($line->fresh());
         }
+    }
+
+    /**
+     * Is this voucher a delivery to someone outside the business, rather than
+     * an internal stock movement?
+     *
+     * The distinction decides which of the spec's "required" rules bite: a
+     * delivery is handed to a person at an address who signs for it, while a
+     * move from one of our warehouses to a rep's boot has neither.
+     */
+    protected function isDelivery(Location $to): bool
+    {
+        return $to->type === 'hospital' || (bool) $to->is_ad_hoc;
     }
 
     /** The hospital contact whose name goes on the voucher's CONTACT PERSON row. */

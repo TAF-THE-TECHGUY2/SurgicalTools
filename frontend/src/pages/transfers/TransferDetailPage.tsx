@@ -18,6 +18,8 @@ import { DataTable } from '@/components/ui/Table'
 import type { Column } from '@/components/ui/Table'
 import { LoadingState, ErrorState } from '@/components/ui/States'
 import { SignaturePad } from '@/components/SignaturePad'
+import { VoucherSheet } from '@/components/voucher/VoucherSheet'
+import type { VoucherRow } from '@/components/voucher/VoucherSheet'
 import { cn } from '@/lib/cn'
 import { formatDate, formatDateTime, humanize } from '@/lib/format'
 import type { Transfer, TransferItem } from '@/types'
@@ -153,6 +155,17 @@ export default function TransferDetailPage() {
     && (hasPermission('transfer.create') || hasPermission('transfer.override'))
   const canDecide = transfer.status === 'pending_approval' && hasPermission('transfer.approve')
 
+  /** The transfer's lines as the voucher's ruled grid. */
+  const voucherRows: VoucherRow[] = (transfer.items ?? []).map((i) => ({
+    key: i.id,
+    code: i.ref_code,
+    description: i.description ?? '',
+    lot: i.lot_number,
+    qty: i.quantity,
+    flagged: i.is_transfer_adjustment,
+    flagLabel: i.adjustment_type ? humanize(i.adjustment_type) : null,
+  }))
+
   const itemColumns: Column<TransferItem>[] = [
     { key: 'item', header: 'Item', render: (r) => <span className="font-medium text-slate-800">{r.description ?? '—'}</span> },
     { key: 'ref_code', header: 'Cat No', render: (r) => r.ref_code },
@@ -177,6 +190,7 @@ export default function TransferDetailPage() {
   return (
     <>
       <PageHeader
+        className="no-print"
         title={
           <span className="flex flex-wrap items-center gap-3">
             {transfer.voucher_number
@@ -203,7 +217,7 @@ export default function TransferDetailPage() {
       />
 
       {awaitingRecipient && (
-        <div className="mb-6 flex flex-wrap items-start justify-between gap-3 rounded-lg border-l-4 border-amber-400 bg-amber-50 px-4 py-3">
+        <div className="no-print mb-6 flex flex-wrap items-start justify-between gap-3 rounded-lg border-l-4 border-amber-400 bg-amber-50 px-4 py-3">
           <div className="flex items-start gap-3 text-sm">
             <PenLine className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
             <div>
@@ -223,7 +237,7 @@ export default function TransferDetailPage() {
       )}
 
       {adjustments.length > 0 && (
-        <div className="mb-6 flex items-start gap-3 rounded-lg border-l-4 border-orange-400 bg-orange-50 px-4 py-3">
+        <div className="no-print mb-6 flex items-start gap-3 rounded-lg border-l-4 border-orange-400 bg-orange-50 px-4 py-3">
           <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-orange-600" />
           <div className="text-sm">
             <p className="font-semibold text-orange-900">
@@ -239,7 +253,7 @@ export default function TransferDetailPage() {
       )}
 
       {canDecide && (
-        <div className="mb-6 flex flex-wrap gap-3">
+        <div className="no-print mb-6 flex flex-wrap gap-3">
           <Button
             loading={approve.isPending}
             disabled={awaitingRecipient && !hasPermission('transfer.override')}
@@ -260,29 +274,30 @@ export default function TransferDetailPage() {
         </div>
       )}
 
-      <Card className="mb-6">
-        <CardHeader title="Delivery voucher" />
-        <CardBody className="grid gap-2 text-sm sm:grid-cols-2">
-          <Row label="Voucher no." value={transfer.voucher_number ?? '—'} />
-          <Row label="Reference" value={transfer.reference} />
-          <Row label="Date" value={formatDate(transfer.transfer_date ?? transfer.created_at)} />
-          <Row label="Invoice no." value={transfer.invoice_reference ?? '—'} />
-          <Row label="Deliver to" value={toName} />
-          <Row label="Contact person" value={transfer.contact_person_name ?? '—'} />
-          {transfer.delivery_address && (
-            <div className="sm:col-span-2">
-              <Row label="Address" value={transfer.delivery_address} />
-            </div>
-          )}
-          <Row label="Name of recipient" value={transfer.recipient_name ?? '—'} />
-          <Row
-            label="Date delivered"
-            value={transfer.delivery_timestamp ? formatDateTime(transfer.delivery_timestamp) : '—'}
-          />
-        </CardBody>
-      </Card>
+      {/* The record copy, in the shape of the pad it replaces. */}
+      <div className="mb-6">
+        <VoucherSheet
+          voucherNumber={transfer.voucher_number ?? transfer.reference}
+          date={(transfer.transfer_date ?? transfer.created_at ?? '').slice(0, 10)}
+          rows={voucherRows}
+          recipientName={transfer.recipient_name}
+          dateDelivered={
+            transfer.delivery_timestamp ? formatDateTime(transfer.delivery_timestamp) : null
+          }
+          signatureUrl={recipientSig?.url ?? null}
+          fields={{
+            deliverTo: isHospitalDelivery ? toName : `From ${fromName} to ${toName}`,
+            address: transfer.delivery_address ?? '',
+            contactPerson: transfer.contact_person_name ?? '',
+            invoiceRef: transfer.invoice_reference ?? '',
+          }}
+        />
+        <p className="no-print mt-2 text-xs text-slate-400">
+          Internal reference {transfer.reference} · {fromName} → {toName}
+        </p>
+      </div>
 
-      <Card className="mb-6">
+      <Card className="no-print mb-6">
         <CardHeader title="Devices" subtitle={`${transfer.items?.length ?? 0} unit(s) on this transfer`} />
         <CardBody className="p-0">
           <DataTable
@@ -296,7 +311,7 @@ export default function TransferDetailPage() {
         </CardBody>
       </Card>
 
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div className="no-print grid gap-6 lg:grid-cols-2">
         <Card>
           <CardHeader title="People & timeline" />
           <CardBody className="grid gap-2 text-sm">
@@ -436,8 +451,13 @@ export default function TransferDetailPage() {
             />
           </Field>
 
+          {/* dev-spec §4: the pad does not activate until the signatory is named. */}
           <Field label="Signature" required>
-            <SignaturePad onChange={setRecipientSignature} />
+            <SignaturePad
+              onChange={setRecipientSignature}
+              disabled={!recipientName.trim()}
+              disabledReason="Enter the recipient's name before they sign."
+            />
           </Field>
 
           {/* dev-spec §5: who else gets the finished voucher. Asked here

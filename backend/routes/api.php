@@ -61,6 +61,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::prefix('transfers')->name('transfers.')->group(function () {
         Route::get('/', [TransferController::class, 'index'])->name('index');
         Route::post('/', [TransferController::class, 'store'])->name('store');
+        // Before {transfer}: a literal segment would otherwise bind as an id.
+        Route::get('next-voucher', [TransferController::class, 'nextVoucher'])->name('nextVoucher');
         Route::get('{transfer}', [TransferController::class, 'show'])->name('show');
         Route::post('{transfer}/sign-delivery', [TransferController::class, 'signDelivery'])->name('signDelivery');
         Route::post('{transfer}/approve', [TransferController::class, 'approve'])->name('approve');

@@ -17,11 +17,13 @@ import { Badge } from '@/components/ui/Badge'
 import { LoadingState, ErrorState, EmptyState } from '@/components/ui/States'
 import { SignaturePad } from '@/components/SignaturePad'
 import { TransferScanSheet } from '@/components/scanner/TransferScanSheet'
+import { VoucherSheet } from '@/components/voucher/VoucherSheet'
+import type { VoucherRow } from '@/components/voucher/VoucherSheet'
 import { formatDate, formatDateTime, humanize } from '@/lib/format'
 import { cn } from '@/lib/cn'
 import type {
-  DeviceUnit, GroupedStockRow, LocationEntity, LocationInventoryResponse, Transfer,
-  TransferAdjustmentDraft,
+  DeviceUnit, GroupedStockRow, LocationEntity, LocationInventoryResponse, SelectedUnit,
+  Transfer, TransferAdjustmentDraft,
 } from '@/types'
 
 const STEPS = ['From', 'Stock', 'To', 'Voucher', 'Sign & Request'] as const
@@ -36,7 +38,7 @@ export default function TransferCreatePage() {
   const [toId, setToId] = useState<number | null>(null)
   // Destination typed in because the clinic isn't on the hospitals master.
   const [newDestination, setNewDestination] = useState('')
-  const [selected, setSelected] = useState<Map<number, DeviceUnit & { itemName: string }>>(new Map())
+  const [selected, setSelected] = useState<Map<number, SelectedUnit>>(new Map())
   const [adjustments, setAdjustments] = useState<TransferAdjustmentDraft[]>([])
   const [signature, setSignature] = useState('')
   const [notes, setNotes] = useState('')
@@ -76,6 +78,18 @@ export default function TransferCreatePage() {
     enabled: toId !== null,
   })
 
+  /**
+   * dev-spec §2 step 1: the number is on the form while the rep fills it in,
+   * as it is pre-printed on the pad. Advisory only — the binding number is
+   * allocated under lock on submit, so this is labelled as provisional.
+   */
+  const { data: nextVoucher } = useQuery({
+    queryKey: ['transfers', 'next-voucher'],
+    queryFn: async () =>
+      (await api.get<{ voucher_number: string; date: string }>('/transfers/next-voucher')).data,
+    staleTime: 60_000,
+  })
+
   useEffect(() => {
     if (!destination?.hospital) return
     if (!addressTouched) setAddress(destination.hospital.address ?? '')
@@ -88,21 +102,21 @@ export default function TransferCreatePage() {
     }
   }, [destination, addressTouched, contactTouched])
 
-  const toggleUnit = (unit: DeviceUnit, itemName: string) => {
+  const toggleUnit = (unit: DeviceUnit, itemName: string, itemCode: string) => {
     setSelected((prev) => {
       const next = new Map(prev)
       if (next.has(unit.id)) next.delete(unit.id)
-      else next.set(unit.id, { ...unit, itemName })
+      else next.set(unit.id, { ...unit, itemName, itemCode })
       return next
     })
   }
 
   /** The scanner only ever adds — a scanned item is in the box. */
-  const selectUnit = (unit: DeviceUnit, itemName: string) => {
+  const selectUnit = (unit: DeviceUnit, itemName: string, itemCode: string) => {
     setSelected((prev) => {
       if (prev.has(unit.id)) return prev
       const next = new Map(prev)
-      next.set(unit.id, { ...unit, itemName })
+      next.set(unit.id, { ...unit, itemName, itemCode })
       return next
     })
   }
@@ -124,13 +138,43 @@ export default function TransferCreatePage() {
     setStep(3)
   }
 
+  /**
+   * A hand-over to a hospital, clinic or doctor — as opposed to an internal
+   * move between our own warehouses and boots. Only a delivery has an address
+   * to give and a recipient to sign, so only a delivery enforces those.
+   */
+  const isDelivery = to ? to.type === 'hospital' : newDestination.trim() !== ''
+
   const canNext = [
     fromId !== null,
     selected.size > 0 || adjustments.length > 0,
     toId !== null || newDestination.trim() !== '',
-    true, // voucher header is all optional
+    // dev-spec §4 makes Address a required field on a delivery voucher.
+    !isDelivery || address.trim() !== '',
     signature !== '',
   ][step]
+
+  /** The picked units and scanned exceptions as the voucher's ruled lines. */
+  const voucherRows = useMemo<VoucherRow[]>(() => [
+    ...[...selected.values()].map((u) => ({
+      key: `u-${u.id}`,
+      code: u.itemCode,
+      description: u.itemName,
+      lot: u.lot_number,
+      qty: 1,
+    })),
+    ...adjustments.map((a) => ({
+      key: a.key,
+      code: a.ref_code,
+      description: a.description ?? a.ref_code,
+      lot: a.lot_number,
+      // One scan, one unit — the draft carries no count, and the server
+      // defaults a scanned adjustment to 1.
+      qty: 1,
+      flagged: true,
+      flagLabel: humanize(a.adjustment_type),
+    })),
+  ], [selected, adjustments])
 
   const submit = async () => {
     const typed = newDestination.trim()
@@ -275,60 +319,74 @@ export default function TransferCreatePage() {
       )}
 
       {step === 3 && (
-        <Card>
-          <CardBody className="grid gap-4 sm:grid-cols-2">
-            {!to && newDestination.trim() !== '' && (
-              <div className="sm:col-span-2 flex items-start gap-2 rounded-lg border-l-4 border-amber-400 bg-amber-50 px-3 py-2 text-sm">
-                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
-                <span className="text-amber-900">
-                  <strong>{newDestination.trim()}</strong> isn&apos;t on the hospitals
-                  list, so there&apos;s nothing to prefill — please enter the address
-                  and contact person yourself.
-                </span>
-              </div>
-            )}
+        <>
+          {!to && newDestination.trim() !== '' && (
+            <div className="mb-4 flex items-start gap-2 rounded-lg border-l-4 border-amber-400 bg-amber-50 px-3 py-2 text-sm">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+              <span className="text-amber-900">
+                <strong>{newDestination.trim()}</strong> isn&apos;t on the hospitals
+                list, so there&apos;s nothing to prefill — please enter the address
+                and contact person yourself.
+              </span>
+            </div>
+          )}
 
-            <div className="sm:col-span-2">
-              <h3 className="font-semibold text-slate-800">Delivery voucher</h3>
-              <p className="text-sm text-slate-500">
-                These print on the voucher. Address and contact are prefilled from
-                {' '}{destinationName || 'the destination'} — edit if this delivery differs.
+          {/* The pad, on screen. Reps fill the same boxes in the same places. */}
+          <VoucherSheet
+            editable
+            voucherNumber={nextVoucher?.voucher_number}
+            provisional
+            date={nextVoucher?.date ?? new Date().toISOString().slice(0, 10)}
+            rows={voucherRows}
+            required={isDelivery ? ['deliverTo', 'address'] : []}
+            lockedFields={['deliverTo']}
+            fields={{
+              // The pads write the whole movement on this line for an internal
+              // transfer, and name the hospital directly for a delivery. The
+              // PDF does the same, so the screen must not disagree with it.
+              deliverTo: isDelivery ? destinationName : `From ${from?.name ?? ''} to ${destinationName}`,
+              address,
+              contactPerson,
+              invoiceRef,
+            }}
+            onFieldChange={(patch) => {
+              if (patch.address !== undefined) { setAddressTouched(true); setAddress(patch.address) }
+              if (patch.contactPerson !== undefined) { setContactTouched(true); setContactPerson(patch.contactPerson) }
+              if (patch.invoiceRef !== undefined) setInvoiceRef(patch.invoiceRef)
+            }}
+          />
+
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs text-slate-500">
+              Deliver To comes from the destination you picked.{' '}
+              <button
+                type="button"
+                className="font-semibold text-brand-700 underline underline-offset-2"
+                onClick={() => setStep(2)}
+              >
+                Change destination
+              </button>
+            </p>
+            {isDelivery && address.trim() === '' && (
+              <p className="text-xs font-semibold text-[#c1121f]">
+                An address is required before this voucher can be signed.
               </p>
-            </div>
+            )}
+          </div>
 
-            <Field label="Invoice no." hint="Leave blank if the invoice is raised after delivery.">
-              <Input value={invoiceRef} onChange={(e) => setInvoiceRef(e.target.value)} placeholder="INV-4471" />
-            </Field>
-
-            <Field label="Contact person">
-              <Input
-                value={contactPerson}
-                onChange={(e) => { setContactTouched(true); setContactPerson(e.target.value) }}
-                placeholder="Sister Dlamini"
-              />
-            </Field>
-
-            <div className="sm:col-span-2">
-              <Field label="Address">
-                <Textarea
-                  value={address}
-                  onChange={(e) => { setAddressTouched(true); setAddress(e.target.value) }}
-                  placeholder="Delivery address"
-                />
-              </Field>
-            </div>
-
-            <div className="sm:col-span-2">
-              <Field label="Notes">
+          {/* Not on the paper form — internal context for the approver. */}
+          <Card className="mt-4">
+            <CardBody>
+              <Field label="Notes" hint="Internal only — these do not print on the voucher.">
                 <Textarea
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
                   placeholder="Optional context for the approver…"
                 />
               </Field>
-            </div>
-          </CardBody>
-        </Card>
+            </CardBody>
+          </Card>
+        </>
       )}
 
       {step === 4 && (
@@ -559,8 +617,8 @@ function LocationGrid({ locations, selectedId, onSelect, title }: {
 function StockPicker({ fromId, fromName, selected, onToggle }: {
   fromId: number
   fromName: string
-  selected: Map<number, DeviceUnit & { itemName: string }>
-  onToggle: (unit: DeviceUnit, itemName: string) => void
+  selected: Map<number, SelectedUnit>
+  onToggle: (unit: DeviceUnit, itemName: string, itemCode: string) => void
 }) {
   const [q, setQ] = useState('')
   const [open, setOpen] = useState<Record<number, boolean>>({})
@@ -634,7 +692,7 @@ function StockPicker({ fromId, fromName, selected, onToggle }: {
                             className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-200"
                             disabled={!selectable}
                             checked={checked}
-                            onChange={() => onToggle(u, row.name)}
+                            onChange={() => onToggle(u, row.name, row.catalogue_number ?? row.item_code ?? '')}
                           />
                           <span className="w-28 font-medium text-slate-700">{u.serial_number ?? '—'}</span>
                           <span className="w-28 text-slate-500">Lot {u.lot_number ?? '—'}</span>

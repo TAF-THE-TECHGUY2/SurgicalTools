@@ -61,14 +61,23 @@ class TransferWorkflowTest extends TestCase
         return $u;
     }
 
-    protected function requestTransfer(User $requester, array $unitIds, ?Location $from = null, ?Location $to = null)
-    {
+    protected function requestTransfer(
+        User $requester,
+        array $unitIds,
+        ?Location $from = null,
+        ?Location $to = null,
+        array $overrides = [],
+    ) {
         return app(TransferService::class)->request([
             'from_location_id' => ($from ?? $this->joshBoot)->id,
             'to_location_id'   => ($to ?? $this->mikeBoot)->id,
             'unit_ids'         => $unitIds,
             'signature_path'   => 'sig.png',
             'signer_name'      => $requester->name,
+            // A delivery voucher requires an address (dev-spec §4); internal
+            // moves ignore it, so it is safe to pass by default here.
+            'delivery_address' => '1 Hospital Road, Tembisa',
+            ...$overrides,
         ], $requester);
     }
 

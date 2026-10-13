@@ -42,3 +42,129 @@ body {
 }
 *::-webkit-scrollbar { height: 8px; width: 8px; }
 *::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 9999px; }
+
+/*
+  ------------------------------------------------------------------
+  Stock Movement / Delivery Voucher
+  ------------------------------------------------------------------
+  A reproduction of the printed pad, so reps who have filled the paper
+  form for years recognise the screen. Kept here rather than in utility
+  classes because the same rules have to hold for screen *and* print,
+  and the print sheet is where fidelity actually matters.
+*/
+@layer components {
+  .voucher-sheet {
+    /* The pad is NCR paper, not white — the cream is what makes it read
+       as "the voucher" at a glance. */
+    background: #faf7ec;
+    color: #000;
+    border: 1px solid #000;
+    font-family: Arial, Helvetica, 'Liberation Sans', sans-serif;
+    font-size: 11px;
+    line-height: 1.3;
+  }
+
+  .voucher-label {
+    display: block;
+    font-size: 7px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #374151;
+  }
+
+  /* The ruled grid. Every cell is boxed, as on the pad. */
+  .voucher-th {
+    border-top: 1px solid #000;
+    border-right: 1px solid #000;
+    padding: 3px 6px;
+    font-size: 8px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    text-align: left;
+    background: #efece0;
+  }
+  .voucher-th:last-child { border-right: 0; }
+
+  .voucher-td {
+    border-top: 1px solid #000;
+    border-right: 1px solid #000;
+    padding: 4px 6px;
+    font-size: 10px;
+    /* Taller than the paper's 5mm rule: a fingertip has to land on it. */
+    height: 26px;
+    vertical-align: middle;
+    word-break: break-word;
+  }
+  .voucher-td:last-child { border-right: 0; }
+
+  .voucher-footer-label {
+    width: 30%;
+    border-right: 1px solid #000;
+    padding: 6px;
+    font-size: 7.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #374151;
+  }
+  @media (min-width: 640px) {
+    .voucher-footer-label { width: 22%; }
+  }
+
+  /* Written-in values sit on the ruled line, not in a box of their own —
+     a bordered input here would stop the form looking like the form. */
+  .voucher-input {
+    width: 100%;
+    border: 0;
+    background: transparent;
+    padding: 0;
+    font: inherit;
+    font-size: 11px;
+    color: #000;
+    outline: none;
+  }
+  .voucher-input::placeholder { color: #9ca3af; font-style: italic; }
+  .voucher-input:focus { background: #fffbe6; }
+
+  .voucher-ghost { color: #9ca3af; font-size: 10px; font-style: italic; }
+}
+
+/*
+  Print: the voucher alone on an A4 sheet. Anything marked no-print
+  (navigation, buttons, banners) is dropped, so Ctrl-P / AirPrint from the
+  record page produces a hardcopy rather than a screenshot of the app.
+*/
+@media print {
+  @page { size: A4 portrait; margin: 12mm; }
+
+  body { background: #fff; }
+
+  .no-print { display: none !important; }
+
+  /*
+    The app is a fixed-height shell with an internally scrolling <main>, which
+    on paper would clip everything past the first screen. Unwind that so the
+    content flows across pages.
+  */
+  .print-root,
+  .print-root > div,
+  .print-root main {
+    display: block !important;
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+  }
+  .print-root main { padding: 0 !important; }
+  .print-root main > div { max-width: none !important; }
+
+  .voucher-sheet {
+    /* White stock on the printer; the cream is a screen affordance. */
+    background: #fff !important;
+    font-size: 10px;
+    break-inside: avoid;
+  }
+  .voucher-sheet .voucher-input { background: transparent !important; }
+  .voucher-th { background: #f3f4f6 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .voucher-sheet .bg-black { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}

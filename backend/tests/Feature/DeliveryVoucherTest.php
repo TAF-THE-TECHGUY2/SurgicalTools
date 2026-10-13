@@ -571,6 +571,7 @@ class DeliveryVoucherTest extends TestCase
             'unit_ids'         => $this->circular->units()->pluck('id')->take(1)->all(),
             'signature_path'   => 'sig.png',
             'signer_name'      => $this->rep->name,
+            'delivery_address' => '14 Monument Road, Kempton Park',
         ], $this->rep);
 
         $this->expectException(ValidationException::class);
@@ -589,6 +590,7 @@ class DeliveryVoucherTest extends TestCase
             'unit_ids'         => [$unitId],
             'signature_path'   => 'sig.png',
             'signer_name'      => $this->rep->name,
+            'delivery_address' => '14 Monument Road, Kempton Park',
         ], $this->rep);
 
         $first = $make($units[0], 'Kempton Day Clinic');

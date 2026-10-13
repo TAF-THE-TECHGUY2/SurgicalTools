@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Resources\TransferResource;
 use App\Models\Transfer;
 use App\Services\TransferService;
+use App\Support\ReferenceGenerator;
 use App\Support\SignatureStorage;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
@@ -51,6 +52,32 @@ class TransferController extends Controller
             'fromLocation.owner:id,name', 'toLocation.hospital', 'requester', 'approver',
             'items', 'signatures', 'documents',
         ]));
+    }
+
+    /**
+     * The voucher number this form will most likely be given.
+     *
+     * dev-spec §2 step 1 has the number fetched when the form opens, the way
+     * the pad has it pre-printed at the top. It is advisory: allocating for
+     * real here would burn a number every time a rep opened the form and
+     * thought better of it, leaving gaps in a sequence that is supposed to be
+     * auditable. The binding allocation still happens under an advisory lock
+     * when the voucher is submitted, so two reps filling forms at the same
+     * time see the same preview and still get different numbers.
+     */
+    public function nextVoucher(Request $request)
+    {
+        abort_unless($request->user()->can('transfer.create'), 403);
+
+        return response()->json([
+            'voucher_number' => ReferenceGenerator::peekSerial(
+                Transfer::class, 'voucher_number', (int) config('surgical.voucher.start_number', 130119),
+            ),
+            // The caller must label it: a rep who copies a provisional number
+            // onto other paperwork has created a discrepancy, not a record.
+            'provisional' => true,
+            'date'        => now()->toDateString(),
+        ]);
     }
 
     /**
@@ -102,7 +129,11 @@ class TransferController extends Controller
             'ip_address'       => $request->ip(),
             'notes'            => $data['notes'] ?? null,
 
-            'transfer_date'       => $data['transfer_date'] ?? null,
+            // dev-spec §4: the header date is the system date, "editable if
+            // manual override allowed by admin". A rep back-dating their own
+            // voucher would undo the point of an automatic timestamp, so a
+            // supplied date is honoured only for an admin.
+            'transfer_date'       => $request->user()->isAdmin() ? ($data['transfer_date'] ?? null) : null,
             'invoice_reference'   => $data['invoice_reference'] ?? null,
             'delivery_address'    => $data['delivery_address'] ?? null,
             'contact_person_name' => $data['contact_person_name'] ?? null,

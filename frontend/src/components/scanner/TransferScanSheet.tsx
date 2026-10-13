@@ -10,7 +10,8 @@ import {
 } from '@/components/scanner/ScannerFrame'
 import { isAdjustmentResult, normalizeLot } from '@/lib/scan'
 import type {
-  DeviceUnit, GroupedStockRow, ScanExtractResponse, ScanExtraction, TransferAdjustmentDraft,
+  DeviceUnit, GroupedStockRow, ScanExtractResponse, ScanExtraction, SelectedUnit,
+  TransferAdjustmentDraft,
 } from '@/types'
 
 /**
@@ -55,9 +56,9 @@ export function TransferScanSheet({
   sourceName: string
   inventory: GroupedStockRow[]
   /** Units already picked, so a second scan of a lot takes a different one. */
-  selected: Map<number, DeviceUnit & { itemName: string }>
+  selected: Map<number, SelectedUnit>
   adjustments: TransferAdjustmentDraft[]
-  onSelectUnit: (unit: DeviceUnit, itemName: string) => void
+  onSelectUnit: (unit: DeviceUnit, itemName: string, itemCode: string) => void
   onAddAdjustment: (row: TransferAdjustmentDraft) => void
   onRemoveAdjustment: (key: string) => void
   onClose: () => void
@@ -81,6 +82,7 @@ export function TransferScanSheet({
     result: string
     unit?: DeviceUnit
     itemName?: string
+    itemCode?: string
     expectedLot?: string | null
   } => {
     const ref = extracted.ref?.trim()
@@ -100,6 +102,7 @@ export function TransferScanSheet({
       return {
         result: 'lot_mismatch',
         itemName: row.name,
+        itemCode: row.catalogue_number ?? row.item_code ?? undefined,
         expectedLot: row.units.find((u) => u.lot_number)?.lot_number ?? null,
       }
     }
@@ -107,9 +110,11 @@ export function TransferScanSheet({
     const free = ofLot.find((u) => u.status === 'available' && !selectedRef.current.has(u.id))
 
     // Right item, right lot, but every unit of it is already on the voucher.
-    if (!free) return { result: 'exhausted', itemName: row.name }
+    const itemCode = row.catalogue_number ?? row.item_code ?? undefined
 
-    return { result: 'selected', unit: free, itemName: row.name }
+    if (!free) return { result: 'exhausted', itemName: row.name, itemCode }
+
+    return { result: 'selected', unit: free, itemName: row.name, itemCode }
   }, [])
 
   const send = useCallback(
@@ -135,7 +140,11 @@ export function TransferScanSheet({
         const match = resolve(extracted)
 
         if (match.result === 'selected' && match.unit) {
-          onSelectUnit(match.unit, match.itemName ?? 'Device')
+          onSelectUnit(
+            match.unit,
+            match.itemName ?? 'Device',
+            match.itemCode ?? extracted.ref ?? '',
+          )
         } else if (isAdjustmentResult(match.result)) {
           onAddAdjustment({
             key,
