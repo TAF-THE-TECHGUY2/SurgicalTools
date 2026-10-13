@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Services\Vision\LabelVisionClient;
 use Illuminate\Support\Carbon;
 use InvalidArgumentException;
 
@@ -22,7 +23,7 @@ use InvalidArgumentException;
  */
 class ScanExtractionService
 {
-    public function __construct(protected ClaudeVisionClient $vision) {}
+    public function __construct(protected LabelVisionClient $vision) {}
 
     /** The GS1 separator that terminates a variable-length element string. */
     protected const FNC1 = "\x1D";

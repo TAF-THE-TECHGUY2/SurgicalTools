@@ -138,8 +138,25 @@ return [
     | it without affecting barcode scanning.
     */
     'ocr' => [
+        /*
+        | Which provider reads a label photo. Barcode scanning — the primary
+        | path — uses none of this. Set to the account you actually have:
+        | 'anthropic' or 'openai'. Leaving the matching key empty disables the
+        | photo fallback without affecting barcode scanning.
+        */
+        'provider'       => env('OCR_PROVIDER', 'anthropic'),
+
+        // Anthropic
         'api_key'        => env('ANTHROPIC_API_KEY'),
         'model'          => env('OCR_MODEL', 'claude-opus-5'),
+
+        // OpenAI
+        'openai' => [
+            'api_key'  => env('OPENAI_API_KEY'),
+            'model'    => env('OPENAI_OCR_MODEL', 'gpt-4o'),
+            'base_url' => env('OPENAI_BASE_URL', 'https://api.openai.com/v1'),
+        ],
+
         // Extractions at or below this are held for the runner to confirm.
         'min_confidence' => (float) env('OCR_MIN_CONFIDENCE', 0.8),
         'timeout'        => (int) env('OCR_TIMEOUT_SECONDS', 45),

@@ -76,10 +76,14 @@ class TestLabelOcr extends Command
             return null;
         }
 
+        $provider = config('surgical.ocr.provider', 'anthropic');
+
         if (! $extraction->visionAvailable()) {
-            $this->components->error('Vision OCR is not configured.');
-            $this->line('  Set ANTHROPIC_API_KEY in .env to read labels from photos.');
-            $this->line('  Barcode scanning works without it — try --barcode instead.');
+            $this->components->error("Photo reading is not configured for provider '{$provider}'.");
+            $this->line($provider === 'openai'
+                ? '  Set OPENAI_API_KEY in .env, or switch OCR_PROVIDER to anthropic.'
+                : '  Set ANTHROPIC_API_KEY in .env, or switch OCR_PROVIDER to openai.');
+            $this->line('  Barcode scanning works without either — try --barcode instead.');
 
             return null;
         }

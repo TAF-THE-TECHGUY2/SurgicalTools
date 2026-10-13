@@ -179,8 +179,28 @@ class OperationsCommandsTest extends TestCase
 
         try {
             $this->artisan('surgical:test-label-ocr', ['file' => $path])
-                ->expectsOutputToContain('Vision OCR is not configured')
+                ->expectsOutputToContain('not configured')
                 ->expectsOutputToContain('ANTHROPIC_API_KEY')
+                ->assertFailed();
+        } finally {
+            @unlink($path);
+        }
+    }
+
+    /** With OpenAI selected, the message names OPENAI_API_KEY, not Anthropic's. */
+    public function test_label_ocr_names_the_selected_provider(): void
+    {
+        config([
+            'surgical.ocr.provider' => 'openai',
+            'surgical.ocr.openai.api_key' => null,
+        ]);
+        $path = sys_get_temp_dir().'/label-'.uniqid().'.jpg';
+        file_put_contents($path, "\xff\xd8\xff\xe0");
+
+        try {
+            $this->artisan('surgical:test-label-ocr', ['file' => $path])
+                ->expectsOutputToContain("provider 'openai'")
+                ->expectsOutputToContain('OPENAI_API_KEY')
                 ->assertFailed();
         } finally {
             @unlink($path);

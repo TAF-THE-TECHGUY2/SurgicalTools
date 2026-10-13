@@ -50,7 +50,10 @@ x-backend-env: &backend-env
   VOUCHER_START_NUMBER: ${VOUCHER_START_NUMBER:-130119}
   # Optional: OCR fallback for labels whose barcode won't decode. Barcode
   # scanning works without it.
+  OCR_PROVIDER: ${OCR_PROVIDER:-anthropic}
   ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  OPENAI_OCR_MODEL: ${OPENAI_OCR_MODEL:-gpt-4o}
   OCR_MIN_CONFIDENCE: ${OCR_MIN_CONFIDENCE:-0.8}
   # 0 = mail every flagged line immediately (needs the queue worker to batch).
   STOCK_COUNT_DIGEST_MINUTES: ${STOCK_COUNT_DIGEST_MINUTES:-5}
