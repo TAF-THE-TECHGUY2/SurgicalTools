@@ -368,7 +368,7 @@ export default function TransferDetailPage() {
         </Card>
       </div>
 
-      <Card className="mt-6">
+      <Card className="no-print mt-6">
         <CardHeader title="Documents" />
         <CardBody className="grid gap-3">
           {(transfer.documents?.length ?? 0) > 0 && (
