@@ -108,13 +108,20 @@ return [
     'voucher' => [
         /*
         | Where the digital "Stock Movement / Delivery Voucher" sequence
-        | starts. The paper pads run a bare six-digit serial (130101, 130118…),
-        | so this must be set above every number still outstanding in a rep's
-        | car — otherwise a digital voucher can duplicate a written one.
+        | starts. The paper pads run a bare six-digit serial, so this must be
+        | set above every number still outstanding in a rep's car — otherwise a
+        | digital voucher can duplicate a written one.
         |
-        | CONFIRM WITH OPERATIONS BEFORE GOING LIVE.
+        | The fallback is the number operations confirmed and production runs
+        | on. It is deliberately clear of the highest pad seen (130233): a
+        | fallback *below* the pads would quietly reissue written numbers the
+        | first time this variable went missing or a database was rebuilt,
+        | which is the one failure this setting exists to prevent.
+        |
+        | Verify against the pads with `php artisan surgical:voucher-status
+        | --paper-high=<highest printed number>` before going live.
         */
-        'start_number' => (int) env('VOUCHER_START_NUMBER', 130119),
+        'start_number' => (int) env('VOUCHER_START_NUMBER', 140001),
     ],
 
     'stock_count' => [

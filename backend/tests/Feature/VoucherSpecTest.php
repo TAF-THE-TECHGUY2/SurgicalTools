@@ -222,6 +222,33 @@ class VoucherSpecTest extends TestCase
     }
 
     /* ------------------------------------------------------------------ */
+    /*  The shipped default must not reissue a written voucher             */
+    /* ------------------------------------------------------------------ */
+
+    /**
+     * The highest pad seen in the field is 130233. If VOUCHER_START_NUMBER
+     * ever goes missing — a rebuilt box, a restored database, a .env edited
+     * in a hurry — the sequence falls back to whatever is compiled in, and a
+     * fallback below the pads would silently reissue numbers that already
+     * exist on carbon paper in a rep's car.
+     *
+     * This locks the default above that range. It is asserted without setting
+     * config(), deliberately: the value under test is the one the application
+     * actually ships with.
+     */
+    public function test_the_default_start_number_clears_the_known_paper_pads(): void
+    {
+        $this->artisan('surgical:voucher-status', ['--paper-high' => 130233])
+            ->assertSuccessful();
+
+        $this->assertGreaterThan(
+            130233,
+            (int) config('surgical.voucher.start_number'),
+            'the shipped default must sit above every printed pad',
+        );
+    }
+
+    /* ------------------------------------------------------------------ */
     /*  §5 — distribution                                                  */
     /* ------------------------------------------------------------------ */
 

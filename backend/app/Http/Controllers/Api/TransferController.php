@@ -71,7 +71,7 @@ class TransferController extends Controller
 
         return response()->json([
             'voucher_number' => ReferenceGenerator::peekSerial(
-                Transfer::class, 'voucher_number', (int) config('surgical.voucher.start_number', 130119),
+                Transfer::class, 'voucher_number', (int) config('surgical.voucher.start_number', 140001),
             ),
             // The caller must label it: a rep who copies a provisional number
             // onto other paperwork has created a discrepancy, not a record.

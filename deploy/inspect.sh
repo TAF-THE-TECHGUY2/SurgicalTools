@@ -177,7 +177,7 @@ else
 
   VOUCHER=$(env_val VOUCHER_START_NUMBER)
   if [ -z "$VOUCHER" ]; then
-    warn "VOUCHER_START_NUMBER not set — falls back to the 130119 default"; note_issue
+    warn "VOUCHER_START_NUMBER not set — falls back to the 140001 default"; note_issue
   else
     ok "VOUCHER_START_NUMBER: $VOUCHER ${DIM}(must clear the paper pads)${OFF}"
   fi

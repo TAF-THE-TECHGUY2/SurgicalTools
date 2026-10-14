@@ -92,7 +92,7 @@ class TransferService
             $transfer = Transfer::create([
                 'reference'      => ReferenceGenerator::next(Transfer::class, 'reference', 'TR'),
                 'voucher_number' => ReferenceGenerator::nextSerial(
-                    Transfer::class, 'voucher_number', (int) config('surgical.voucher.start_number', 130119),
+                    Transfer::class, 'voucher_number', (int) config('surgical.voucher.start_number', 140001),
                 ),
                 'type'             => TransferType::Standard->value,
                 'status'           => TransferStatus::PendingApproval->value,

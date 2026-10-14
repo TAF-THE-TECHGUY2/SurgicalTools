@@ -47,7 +47,7 @@ x-backend-env: &backend-env
   # --- Scan & voucher module ------------------------------------------------
   # VOUCHER_START_NUMBER must clear the paper pads before go-live; verify with
   #   docker compose ... exec backend php artisan surgical:voucher-status --paper-high=NNNNNN
-  VOUCHER_START_NUMBER: ${VOUCHER_START_NUMBER:-130119}
+  VOUCHER_START_NUMBER: ${VOUCHER_START_NUMBER:-140001}
   # Optional: OCR fallback for labels whose barcode won't decode. Barcode
   # scanning works without it.
   OCR_PROVIDER: ${OCR_PROVIDER:-anthropic}

@@ -68,7 +68,7 @@ FILESYSTEM_DISK=local
 # outstanding on a paper pad, or digital vouchers will duplicate written ones.
 # Verify before go-live:
 #   ./deploy/deploy.sh  (then follow the voucher check it prints)
-VOUCHER_START_NUMBER=130119
+VOUCHER_START_NUMBER=140001
 
 # Optional OCR fallback for labels whose barcode will not decode. Barcode
 # scanning (the primary path) needs none of this.
