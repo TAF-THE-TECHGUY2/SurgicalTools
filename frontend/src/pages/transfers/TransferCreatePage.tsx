@@ -359,13 +359,15 @@ export default function TransferCreatePage() {
             rows={voucherRows}
             required={isDelivery ? ['deliverTo', 'address'] : []}
             lockedFields={['deliverTo']}
-            // Only a delivery has a recipient; an internal move between our
-            // own warehouses has nobody at the other end to sign.
-            recipientEditable={isDelivery}
+            // Every pad has these rows, whatever the destination — stock
+            // handed to another rep's boot still has someone receiving it.
+            // Whether a signature is *required* is a separate question, and
+            // one the approval gate answers, not this form.
+            recipientEditable
             recipientName={recipientName}
             onRecipientNameChange={setRecipientName}
             dateDelivered={deliveredAt ? formatDateTime(deliveredAt) : null}
-            signatureSlot={isDelivery ? (
+            signatureSlot={(
               <div className="w-full py-1">
                 <SignaturePad
                   variant="bare"
@@ -375,7 +377,7 @@ export default function TransferCreatePage() {
                   disabledReason="Enter the recipient's name first"
                 />
               </div>
-            ) : undefined}
+            )}
             fields={{
               // The pads write the whole movement on this line for an internal
               // transfer, and name the hospital directly for a delivery. The
@@ -412,7 +414,7 @@ export default function TransferCreatePage() {
 
           {/* dev-spec §5: asked while the recipient is still standing there,
               which is the only moment anyone can give their email. */}
-          {isDelivery && recipientSignature !== '' && (
+          {recipientSignature !== '' && (
             <Card className="mt-4">
               <CardBody>
                 <p className="mb-2 text-sm font-medium text-slate-700">Send a copy of the voucher</p>
@@ -541,20 +543,22 @@ export default function TransferCreatePage() {
               <Button className="mt-4 w-full" size="lg" disabled={!signature} loading={submitting} onClick={() => void submit()}>
                 <Send className="h-4 w-4" /> Request Transfer
               </Button>
-              {!isDelivery ? (
-                <p className="mt-2 text-center text-xs text-slate-400">
-                  The request goes to the Approval Centre. Stock only moves once it's approved.
-                </p>
-              ) : recipientSignature !== '' ? (
+              {recipientSignature !== '' ? (
                 <p className="mt-2 text-center text-xs text-emerald-700">
-                  {recipientName} has signed for this delivery. It goes straight to
-                  the Approval Centre.
+                  {recipientName} has signed for this. It goes straight to the
+                  Approval Centre.
+                </p>
+              ) : isDelivery ? (
+                // A hospital delivery is the one the approval gate blocks.
+                <p className="mt-2 text-center text-xs text-amber-700">
+                  Nobody has signed for this delivery yet. Take the signature on
+                  the voucher step now, or on the voucher page when you hand the
+                  stock over — it cannot be approved until someone does.
                 </p>
               ) : (
-                <p className="mt-2 text-center text-xs text-amber-700">
-                  Nobody has signed for this delivery yet. You can take the
-                  signature on the voucher step now, or on the voucher page when
-                  you hand the stock over — it cannot be approved until someone does.
+                <p className="mt-2 text-center text-xs text-slate-400">
+                  The request goes to the Approval Centre. Stock only moves once
+                  it's approved.
                 </p>
               )}
             </CardBody>

@@ -287,6 +287,32 @@ class VoucherSpecTest extends TestCase
         app(TransferService::class)->approve($transfer, $this->admin);
     }
 
+    /**
+     * The pad has NAME OF RECIPIENT and SIGNATURE on every sheet, so stock
+     * handed to another rep's boot can be signed for too. Whether a signature
+     * is *required* is the approval gate's question, not the form's.
+     */
+    public function test_an_internal_move_can_also_be_signed_for(): void
+    {
+        $this->actingAs($this->rep)->postJson('/api/transfers', [
+            'from_location_id'    => $this->boot->id,
+            'to_location_id'      => $this->warehouse->id,
+            'unit_ids'            => [$this->item->units()->first()->id],
+            'signature'           => base64_encode('rep-sig'),
+            'recipient_name'      => 'Warehouse Controller',
+            'recipient_signature' => base64_encode('recipient-sig'),
+        ])->assertCreated();
+
+        $transfer = Transfer::latest('id')->first();
+
+        $this->assertSame('Warehouse Controller', $transfer->recipient_name);
+        $this->assertNotNull($transfer->delivery_timestamp);
+        $this->assertSame(1, $transfer->signatures()->where('signer_role', 'recipient')->count());
+
+        // And it still needs no address, because there is no street to give.
+        $this->assertNull($transfer->delivery_address);
+    }
+
     /** §4: a signature with nobody named is what the rule exists to prevent. */
     public function test_a_signature_without_a_name_is_rejected(): void
     {
