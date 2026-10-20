@@ -65,6 +65,19 @@ export interface VoucherSheetProps {
    * it here would silently disagree with the location the stock moves to.
    */
   lockedFields?: Array<keyof VoucherSheetFields>
+  /**
+   * Lets the recipient complete the footer here rather than on a second pass
+   * through the app — dev-spec §2 has them naming themselves (step 4) and
+   * signing (step 5) before the voucher is submitted (step 6).
+   */
+  recipientEditable?: boolean
+  onRecipientNameChange?: (value: string) => void
+  /**
+   * Rendered inside the SIGNATURE cell. A slot rather than a signature pad of
+   * its own, so this file stays a reproduction of the form and does not pull
+   * in a capture library it would otherwise have no use for.
+   */
+  signatureSlot?: ReactNode
   /** Appears under the grid — used for the "scan more" affordance. */
   children?: ReactNode
   className?: string
@@ -86,6 +99,9 @@ export function VoucherSheet({
   onFieldChange,
   required = [],
   lockedFields = [],
+  recipientEditable = false,
+  onRecipientNameChange,
+  signatureSlot,
   children,
   className,
 }: VoucherSheetProps) {
@@ -222,17 +238,28 @@ export function VoucherSheet({
       <div className="flex border-t border-black">
         <div className="voucher-footer-label">Name of Recipient</div>
         <div className="flex-1 border-r border-black px-2 py-[6px] text-[11px]">
-          {recipientName || <span className="voucher-ghost">signed at hand-over</span>}
+          {recipientEditable ? (
+            <VoucherInput
+              value={recipientName ?? ''}
+              onChange={(v) => onRecipientNameChange?.(v)}
+              placeholder="Who is receiving the stock"
+            />
+          ) : (
+            recipientName || <span className="voucher-ghost">signed at hand-over</span>
+          )}
         </div>
         <div className="voucher-footer-label !w-[22%] sm:!w-[16%]">Date Delivered</div>
-        <div className="w-[22%] px-2 py-[6px] text-[10px] sm:w-[16%]">{dateDelivered ?? ''}</div>
+        <div className="w-[22%] px-2 py-[6px] text-[10px] sm:w-[16%]">
+          {/* Stamped by the signature, never typed — dev-spec §4. */}
+          {dateDelivered ?? ''}
+        </div>
       </div>
       <div className="flex border-t border-black">
         <div className="voucher-footer-label">Signature</div>
         <div className="flex min-h-[54px] flex-1 items-center px-2 py-1">
-          {signatureUrl && (
+          {signatureSlot ?? (signatureUrl && (
             <img src={signatureUrl} alt="Recipient signature" className="max-h-[48px] w-auto" />
-          )}
+          ))}
         </div>
       </div>
 

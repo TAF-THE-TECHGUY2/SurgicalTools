@@ -222,6 +222,132 @@ class VoucherSpecTest extends TestCase
     }
 
     /* ------------------------------------------------------------------ */
+    /*  §2 steps 4–6 — the recipient may sign before submission            */
+    /* ------------------------------------------------------------------ */
+
+    /** @return array<string, mixed> */
+    protected function deliveryPayload(array $overrides = []): array
+    {
+        return [
+            'from_location_id'  => $this->boot->id,
+            'to_location_id'    => $this->hospital->id,
+            'unit_ids'          => [$this->item->units()->first()->id],
+            'signature'         => base64_encode('rep-sig'),
+            'delivery_address'  => '20 Pine Avenue, Kempton Park',
+            ...$overrides,
+        ];
+    }
+
+    public function test_the_recipient_can_sign_while_the_voucher_is_raised(): void
+    {
+        $this->actingAs($this->rep)->postJson('/api/transfers', $this->deliveryPayload([
+            'recipient_name'      => 'Sister N. Dlamini',
+            'recipient_signature' => base64_encode('recipient-sig'),
+            'recipient_email'     => 'theatre@arwyp.co.za',
+        ]))->assertCreated();
+
+        $transfer = Transfer::latest('id')->first();
+
+        $this->assertSame('Sister N. Dlamini', $transfer->recipient_name);
+        $this->assertNotNull($transfer->delivery_timestamp, 'DATE DELIVERED stamps itself');
+        $this->assertSame('theatre@arwyp.co.za', $transfer->recipient_email);
+        $this->assertSame(1, $transfer->signatures()->where('signer_role', 'recipient')->count());
+        $this->assertSame(1, $transfer->signatures()->where('signer_role', 'requester')->count());
+    }
+
+    /** Signed at the counter, so an admin can approve without a second trip. */
+    public function test_a_voucher_signed_on_creation_approves_without_an_override(): void
+    {
+        $this->actingAs($this->rep)->postJson('/api/transfers', $this->deliveryPayload([
+            'recipient_name'      => 'Sister N. Dlamini',
+            'recipient_signature' => base64_encode('recipient-sig'),
+        ]))->assertCreated();
+
+        $transfer = app(TransferService::class)->approve(
+            Transfer::latest('id')->first(), $this->admin,
+        );
+
+        $this->assertSame('completed', $transfer->status->value);
+        $this->assertFalse($transfer->admin_override, 'no override needed — it was signed for');
+    }
+
+    /** Leaving it out keeps the two-stage hand-over for a later delivery. */
+    public function test_the_recipient_block_is_optional(): void
+    {
+        $this->actingAs($this->rep)->postJson('/api/transfers', $this->deliveryPayload())
+            ->assertCreated();
+
+        $transfer = Transfer::latest('id')->first();
+
+        $this->assertNull($transfer->recipient_name);
+        $this->assertSame(0, $transfer->signatures()->where('signer_role', 'recipient')->count());
+
+        // Unsigned, so approval still refuses without an override.
+        $this->expectException(ValidationException::class);
+        app(TransferService::class)->approve($transfer, $this->admin);
+    }
+
+    /** §4: a signature with nobody named is what the rule exists to prevent. */
+    public function test_a_signature_without_a_name_is_rejected(): void
+    {
+        $this->actingAs($this->rep)->postJson('/api/transfers', $this->deliveryPayload([
+            'recipient_signature' => base64_encode('recipient-sig'),
+        ]))->assertStatus(422)->assertJsonValidationErrors('recipient_name');
+
+        $this->assertSame(0, Transfer::count(), 'nothing is created, so no number is burned');
+    }
+
+    /** A name without a signature is fine — the recipient signs later. */
+    public function test_a_name_without_a_signature_does_not_close_the_voucher(): void
+    {
+        $this->actingAs($this->rep)->postJson('/api/transfers', $this->deliveryPayload([
+            'recipient_name' => 'Sister N. Dlamini',
+        ]))->assertCreated();
+
+        $transfer = Transfer::latest('id')->first();
+
+        $this->assertNull($transfer->delivery_timestamp, 'not delivered until it is signed');
+        $this->assertSame(0, $transfer->signatures()->where('signer_role', 'recipient')->count());
+    }
+
+    /**
+     * §6 puts this flow in a hospital basement. Everything typed on the form
+     * down there has to survive the trip back up, including the signature.
+     */
+    public function test_a_voucher_raised_offline_keeps_its_header_and_signature(): void
+    {
+        $this->actingAs($this->rep)->postJson('/api/sync/push', [
+            'operations' => [[
+                'client_id' => 'offline-voucher-1',
+                'type'      => 'transfer.request',
+                'payload'   => [
+                    'from_location_id'    => $this->boot->id,
+                    'to_location_id'      => $this->hospital->id,
+                    'unit_ids'            => [$this->item->units()->first()->id],
+                    'signature'           => base64_encode('rep-sig'),
+                    'delivery_address'    => 'Theatre 4, Level 2',
+                    'contact_person_name' => 'Sister N. Dlamini',
+                    'invoice_reference'   => 'INV-4471',
+                    'recipient_name'      => 'Sister N. Dlamini',
+                    'recipient_signature' => base64_encode('recipient-sig'),
+                    'recipient_email'     => 'theatre@arwyp.co.za',
+                ],
+            ]],
+        ])->assertOk();
+
+        $transfer = Transfer::latest('id')->first();
+
+        $this->assertNotNull($transfer, 'the queued voucher replayed');
+        $this->assertSame('Theatre 4, Level 2', $transfer->delivery_address);
+        $this->assertSame('Sister N. Dlamini', $transfer->contact_person_name);
+        $this->assertSame('INV-4471', $transfer->invoice_reference);
+        $this->assertSame('Sister N. Dlamini', $transfer->recipient_name);
+        $this->assertSame('theatre@arwyp.co.za', $transfer->recipient_email);
+        $this->assertNotNull($transfer->delivery_timestamp);
+        $this->assertSame(1, $transfer->signatures()->where('signer_role', 'recipient')->count());
+    }
+
+    /* ------------------------------------------------------------------ */
     /*  The shipped default must not reissue a written voucher             */
     /* ------------------------------------------------------------------ */
 

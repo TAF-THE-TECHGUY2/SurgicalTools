@@ -49,6 +49,10 @@ class TransferService
      *        either to_location_id or new_destination{name} for a clinic that
      *        is not on the hospitals master.
      *
+     *        recipient_signature_path? closes the voucher in one sitting:
+     *        pass it with recipient_name (and optionally recipient_email,
+     *        copy_to_rep) and the hand-over is recorded with the request.
+     *
      * `scanned_adjustments` carries items a scan turned up that the source's
      * authorised list does not hold — [{ref_code, description?, lot_number?,
      * expiry_date?, expected_lot_number?, adjustment_type?, quantity?}]. These
@@ -132,8 +136,7 @@ class TransferService
 
             $this->addScannedAdjustments($transfer, $data['scanned_adjustments'] ?? []);
 
-            // The requester signs at request time (spec step 7). The recipient
-            // signs separately at handover — see signDelivery().
+            // The requester signs at request time (spec step 7).
             $transfer->signatures()->create([
                 'signer_name'       => $data['signer_name'],
                 'signer_role'       => 'requester',
@@ -142,6 +145,15 @@ class TransferService
                 'ip_address'        => $data['ip_address'] ?? null,
                 'signed_at'         => now(),
             ]);
+
+            // dev-spec §2 puts the recipient's name (step 4) and signature
+            // (step 5) *before* submission (step 6) — the rep is standing at
+            // the counter with the box. Taking it here closes the voucher in
+            // one sitting; leaving it out keeps the hand-over for later via
+            // signDelivery(), for stock loaded now and delivered tomorrow.
+            if (filled($data['recipient_signature_path'] ?? null)) {
+                $this->recordDelivery($transfer, $data, $requester);
+            }
 
             $this->notifications->transferAwaitingApproval($transfer);
 
@@ -318,50 +330,84 @@ class TransferService
      */
     public function signDelivery(Transfer $transfer, array $data, User $user): Transfer
     {
+        $data['recipient_signature_path'] = $this->storeRecipientSignature(
+            $data['signature'] ?? '', $transfer->id,
+        );
+
+        return DB::transaction(function () use ($transfer, $data, $user) {
+            $this->recordDelivery($transfer, $data, $user);
+
+            return $transfer->fresh(['items', 'signatures', 'fromLocation', 'toLocation']);
+        });
+    }
+
+    /**
+     * Decode and store a recipient signature.
+     *
+     * storeBase64 throws on an undecodable payload, which is exactly the
+     * "signature payload successfully generated" condition in the spec. Done
+     * before the transaction opens so a bad payload cannot leave a half-built
+     * voucher behind.
+     */
+    public function storeRecipientSignature(string $base64, int|string $reference): string
+    {
+        try {
+            return SignatureStorage::storeBase64($base64, "delivery-{$reference}");
+        } catch (InvalidArgumentException) {
+            throw ValidationException::withMessages([
+                'signature' => 'The signature could not be read. Please sign again.',
+            ]);
+        }
+    }
+
+    /**
+     * Write the voucher's NAME OF RECIPIENT / SIGNATURE / DATE DELIVERED
+     * block.
+     *
+     * Shared by the two moments it can happen: the recipient signing at the
+     * counter while the voucher is being raised, and signing later against a
+     * voucher already in the system. One implementation, because a delivery
+     * signed down one path and a delivery signed down the other have to be
+     * the same record — the timestamp is the audit trail.
+     *
+     * Caller must be inside a transaction.
+     *
+     * @param  array<string, mixed>  $data
+     */
+    protected function recordDelivery(Transfer $transfer, array $data, User $user): void
+    {
         $recipient = trim((string) ($data['recipient_name'] ?? ''));
 
+        // dev-spec §4: the printed name is required before the pad activates.
+        // The UI disables the pad, but a request can arrive without it.
         if ($recipient === '') {
             throw ValidationException::withMessages([
                 'recipient_name' => 'The recipient\'s name is required before the voucher can be signed off.',
             ]);
         }
 
-        // storeBase64 throws on an undecodable payload, which is exactly the
-        // "signature payload successfully generated" condition in the spec.
-        try {
-            $path = SignatureStorage::storeBase64($data['signature'] ?? '', "delivery-{$transfer->id}");
-        } catch (InvalidArgumentException) {
-            throw ValidationException::withMessages([
-                'signature' => 'The signature could not be read. Please sign again.',
-            ]);
-        }
+        $signedAt = isset($data['delivery_timestamp'])
+            ? Carbon::parse($data['delivery_timestamp'])
+            : now();
 
-        return DB::transaction(function () use ($transfer, $data, $user, $recipient, $path) {
-            $signedAt = isset($data['delivery_timestamp'])
-                ? Carbon::parse($data['delivery_timestamp'])
-                : now();
+        $transfer->signatures()->create([
+            'signer_name'       => $recipient,
+            'signer_role'       => 'recipient',
+            'signed_by_user_id' => $user->id,
+            'signature_path'    => $data['recipient_signature_path'],
+            'ip_address'        => $data['ip_address'] ?? null,
+            'signed_at'         => $signedAt,
+        ]);
 
-            $transfer->signatures()->create([
-                'signer_name'       => $recipient,
-                'signer_role'       => 'recipient',
-                'signed_by_user_id' => $user->id,
-                'signature_path'    => $path,
-                'ip_address'        => $data['ip_address'] ?? null,
-                'signed_at'         => $signedAt,
-            ]);
-
-            $transfer->update([
-                'recipient_name'     => $recipient,
-                'delivery_timestamp' => $signedAt,
-                'invoice_reference'  => $data['invoice_reference'] ?? $transfer->invoice_reference,
-                // dev-spec §5 optional distribution, chosen while the recipient
-                // is present. Honoured when the PDF is sent on approval.
-                'recipient_email'    => $data['recipient_email'] ?? $transfer->recipient_email,
-                'copy_to_rep'        => $data['copy_to_rep'] ?? $transfer->copy_to_rep ?? true,
-            ]);
-
-            return $transfer->fresh(['items', 'signatures', 'fromLocation', 'toLocation']);
-        });
+        $transfer->update([
+            'recipient_name'     => $recipient,
+            'delivery_timestamp' => $signedAt,
+            'invoice_reference'  => $data['invoice_reference'] ?? $transfer->invoice_reference,
+            // dev-spec §5 optional distribution, chosen while the recipient
+            // is present. Honoured when the PDF is sent on approval.
+            'recipient_email'    => $data['recipient_email'] ?? $transfer->recipient_email,
+            'copy_to_rep'        => $data['copy_to_rep'] ?? $transfer->copy_to_rep ?? true,
+        ]);
     }
 
     /** Has the recipient signed for this delivery? */

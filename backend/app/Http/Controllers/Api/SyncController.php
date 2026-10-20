@@ -80,17 +80,44 @@ class SyncController extends Controller
         return ['client_id' => $op['client_id'], 'status' => 'applied', 'server_id' => $serverId];
     }
 
+    /**
+     * Replay a voucher raised offline.
+     *
+     * Carries the whole payload, not just the movement: spec §6 puts this flow
+     * in a hospital basement, which is precisely where the rep fills in the
+     * address, the contact and — now that the recipient signs before
+     * submission — the hand-over signature. Dropping any of those on the way
+     * back up would hand back a voucher that has to be done again, by which
+     * time the person who signed has gone.
+     */
     protected function createTransfer(array $payload, string $clientId, $user): int
     {
         $path = SignatureStorage::storeBase64($payload['signature'], 'sync-'.$clientId);
 
         $transfer = $this->transfers->request([
             'from_location_id' => $payload['from_location_id'],
-            'to_location_id'   => $payload['to_location_id'],
-            'unit_ids'         => $payload['unit_ids'],
+            'to_location_id'   => $payload['to_location_id'] ?? null,
+            'new_destination'  => $payload['new_destination'] ?? null,
+            'unit_ids'         => $payload['unit_ids'] ?? [],
             'signature_path'   => $path,
             'signer_name'      => $payload['signer_name'] ?? $user->name,
             'notes'            => $payload['notes'] ?? null,
+
+            // Voucher header, as typed on the form.
+            'invoice_reference'   => $payload['invoice_reference'] ?? null,
+            'delivery_address'    => $payload['delivery_address'] ?? null,
+            'contact_person_name' => $payload['contact_person_name'] ?? null,
+            'scanned_adjustments' => $payload['scanned_adjustments'] ?? [],
+
+            // The hand-over, if it happened before the rep got signal back.
+            'recipient_name'           => $payload['recipient_name'] ?? null,
+            'recipient_signature_path' => filled($payload['recipient_signature'] ?? null)
+                ? $this->transfers->storeRecipientSignature(
+                    $payload['recipient_signature'], 'sync-'.$clientId,
+                )
+                : null,
+            'recipient_email' => $payload['recipient_email'] ?? null,
+            'copy_to_rep'     => $payload['copy_to_rep'] ?? null,
         ], $user);
 
         $transfer->update(['meta' => ['client_id' => $clientId]]);

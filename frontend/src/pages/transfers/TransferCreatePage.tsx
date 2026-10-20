@@ -52,6 +52,21 @@ export default function TransferCreatePage() {
   const [addressTouched, setAddressTouched] = useState(false)
   const [contactTouched, setContactTouched] = useState(false)
 
+  // The voucher's NAME OF RECIPIENT / SIGNATURE / DATE DELIVERED block. The
+  // rep is usually standing at the counter, so dev-spec §2 takes these before
+  // submission; leaving them blank keeps the hand-over for a later visit.
+  const [recipientName, setRecipientName] = useState('')
+  const [recipientSignature, setRecipientSignature] = useState('')
+  const [deliveredAt, setDeliveredAt] = useState<string | null>(null)
+  const [recipientEmail, setRecipientEmail] = useState('')
+  const [copyToRep, setCopyToRep] = useState(true)
+
+  /** DATE DELIVERED stamps itself on signature, and clears if they re-sign. */
+  const captureRecipientSignature = (dataUrl: string) => {
+    setRecipientSignature(dataUrl)
+    setDeliveredAt(dataUrl ? new Date().toISOString() : null)
+  }
+
   const { data: locations, isLoading: locationsLoading } = useQuery({
     queryKey: ['locations'],
     queryFn: async () => (await api.get<{ data: LocationEntity[] }>('/locations')).data.data,
@@ -192,6 +207,10 @@ export default function TransferCreatePage() {
       notes: notes || null,
       invoice_reference: invoiceRef || null,
       contact_person_name: contactPerson || null,
+      recipient_name: recipientName || null,
+      recipient_signature: recipientSignature || null,
+      recipient_email: recipientSignature ? (recipientEmail || null) : null,
+      copy_to_rep: recipientSignature ? copyToRep : null,
       delivery_address: address || null,
       // Local keys are for the UI only; the server assigns its own line ids.
       scanned_adjustments: adjustments.map(({ key: _key, ...row }) => row),
@@ -340,6 +359,23 @@ export default function TransferCreatePage() {
             rows={voucherRows}
             required={isDelivery ? ['deliverTo', 'address'] : []}
             lockedFields={['deliverTo']}
+            // Only a delivery has a recipient; an internal move between our
+            // own warehouses has nobody at the other end to sign.
+            recipientEditable={isDelivery}
+            recipientName={recipientName}
+            onRecipientNameChange={setRecipientName}
+            dateDelivered={deliveredAt ? formatDateTime(deliveredAt) : null}
+            signatureSlot={isDelivery ? (
+              <div className="w-full py-1">
+                <SignaturePad
+                  variant="bare"
+                  height={52}
+                  onChange={captureRecipientSignature}
+                  disabled={!recipientName.trim()}
+                  disabledReason="Enter the recipient's name first"
+                />
+              </div>
+            ) : undefined}
             fields={{
               // The pads write the whole movement on this line for an internal
               // transfer, and name the hospital directly for a delivery. The
@@ -373,6 +409,39 @@ export default function TransferCreatePage() {
               </p>
             )}
           </div>
+
+          {/* dev-spec §5: asked while the recipient is still standing there,
+              which is the only moment anyone can give their email. */}
+          {isDelivery && recipientSignature !== '' && (
+            <Card className="mt-4">
+              <CardBody>
+                <p className="mb-2 text-sm font-medium text-slate-700">Send a copy of the voucher</p>
+                <Field
+                  label="Recipient's email"
+                  hint="Optional — they receive the signed PDF once it's approved."
+                >
+                  <Input
+                    type="email"
+                    value={recipientEmail}
+                    onChange={(e) => setRecipientEmail(e.target.value)}
+                    placeholder="theatre@hospital.co.za"
+                  />
+                </Field>
+                <label className="mt-3 flex items-center gap-2 text-sm text-slate-700">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-200"
+                    checked={copyToRep}
+                    onChange={(e) => setCopyToRep(e.target.checked)}
+                  />
+                  Send a copy to me ({user?.name})
+                </label>
+                <p className="mt-2 text-xs text-slate-400">
+                  A copy always goes to the transfers mailbox for the records.
+                </p>
+              </CardBody>
+            </Card>
+          )}
 
           {/* Not on the paper form — internal context for the approver. */}
           <Card className="mt-4">
@@ -461,6 +530,10 @@ export default function TransferCreatePage() {
           <Card>
             <CardBody>
               <h3 className="mb-1 font-semibold text-slate-800">Your signature</h3>
+              <p className="mb-2 text-xs text-slate-500">
+                Yours as the rep dispatching the stock — separate from the
+                recipient's on the voucher itself.
+              </p>
               <p className="mb-3 text-xs text-slate-500">
                 Signed by <span className="font-medium text-slate-700">{user?.name}</span> · {formatDateTime(new Date().toISOString())} (captured automatically)
               </p>
@@ -468,14 +541,20 @@ export default function TransferCreatePage() {
               <Button className="mt-4 w-full" size="lg" disabled={!signature} loading={submitting} onClick={() => void submit()}>
                 <Send className="h-4 w-4" /> Request Transfer
               </Button>
-              {(to?.type === 'hospital' || (!to && newDestination.trim() !== '')) ? (
-                <p className="mt-2 text-center text-xs text-slate-400">
-                  The recipient signs for this on delivery — the voucher cannot be
-                  approved until they do.
-                </p>
-              ) : (
+              {!isDelivery ? (
                 <p className="mt-2 text-center text-xs text-slate-400">
                   The request goes to the Approval Centre. Stock only moves once it's approved.
+                </p>
+              ) : recipientSignature !== '' ? (
+                <p className="mt-2 text-center text-xs text-emerald-700">
+                  {recipientName} has signed for this delivery. It goes straight to
+                  the Approval Centre.
+                </p>
+              ) : (
+                <p className="mt-2 text-center text-xs text-amber-700">
+                  Nobody has signed for this delivery yet. You can take the
+                  signature on the voucher step now, or on the voucher page when
+                  you hand the stock over — it cannot be approved until someone does.
                 </p>
               )}
             </CardBody>

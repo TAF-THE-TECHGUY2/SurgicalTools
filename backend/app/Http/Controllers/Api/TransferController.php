@@ -99,6 +99,19 @@ class TransferController extends Controller
             'signature'        => ['required', 'string'], // base64 PNG from the pad
             'notes'            => ['nullable', 'string', 'max:2000'],
 
+            // dev-spec §2 steps 4–5: the recipient may sign while the voucher
+            // is being raised, rather than on a second pass through the app.
+            // Optional — stock loaded now and delivered tomorrow still signs
+            // later via POST {transfer}/sign-delivery.
+            // The name is required_with the signature, never the reverse: a
+            // rep may write who they are delivering to before the recipient
+            // is standing there, but a signature with nobody named is the
+            // thing §4 exists to prevent.
+            'recipient_name'      => ['nullable', 'required_with:recipient_signature', 'string', 'max:255'],
+            'recipient_signature' => ['nullable', 'string'],
+            'recipient_email'     => ['nullable', 'email', 'max:255'],
+            'copy_to_rep'         => ['nullable', 'boolean'],
+
             // Voucher header.
             'transfer_date'       => ['nullable', 'date'],
             'invoice_reference'   => ['nullable', 'string', 'max:100'],
@@ -119,6 +132,14 @@ class TransferController extends Controller
 
         $path = SignatureStorage::storeBase64($data['signature'], 'request-'.now()->format('YmdHis'));
 
+        // Decoded up front: a bad payload must fail before a voucher number
+        // is burned and units are reserved.
+        $recipientPath = filled($data['recipient_signature'] ?? null)
+            ? $this->service->storeRecipientSignature(
+                $data['recipient_signature'], 'new-'.now()->format('YmdHis'),
+            )
+            : null;
+
         $transfer = $this->service->request([
             'from_location_id' => $data['from_location_id'],
             'to_location_id'   => $data['to_location_id'] ?? null,
@@ -138,6 +159,11 @@ class TransferController extends Controller
             'delivery_address'    => $data['delivery_address'] ?? null,
             'contact_person_name' => $data['contact_person_name'] ?? null,
             'scanned_adjustments' => $data['scanned_adjustments'] ?? [],
+
+            'recipient_name'           => $data['recipient_name'] ?? null,
+            'recipient_signature_path' => $recipientPath,
+            'recipient_email'          => $data['recipient_email'] ?? null,
+            'copy_to_rep'              => $data['copy_to_rep'] ?? null,
         ], $request->user());
 
         return (new TransferResource($transfer))->response()->setStatusCode(201);
