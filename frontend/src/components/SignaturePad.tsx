@@ -14,6 +14,7 @@ export function SignaturePad({
   disabledReason,
   height = 180,
   variant = 'boxed',
+  value,
 }: {
   onChange: (dataUrl: string) => void
   /**
@@ -33,6 +34,17 @@ export function SignaturePad({
    * instead of printing as a white patch over it.
    */
   variant?: 'boxed' | 'bare'
+  /**
+   * A signature already captured, as a PNG data URI, re-drawn whenever the
+   * canvas is built.
+   *
+   * The pad is a DOM canvas, so it starts blank every time it mounts, while
+   * the signature itself lives in the caller's state. On the voucher that
+   * happens whenever the rep steps forward and back: the form still held the
+   * signature and was still going to submit it, but the cell was empty, which
+   * reads as having lost it.
+   */
+  value?: string
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const padRef = useRef<SignaturePadLib | null>(null)
@@ -53,6 +65,11 @@ export function SignaturePad({
    */
   const onChangeRef = useRef(onChange)
   useEffect(() => { onChangeRef.current = onChange })
+
+  // Read when the canvas is built rather than tracked as a dependency, so a
+  // restore cannot interrupt someone mid-signature.
+  const valueRef = useRef(value)
+  useEffect(() => { valueRef.current = value })
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -79,7 +96,13 @@ export function SignaturePad({
       canvas.getContext('2d')?.scale(ratio, ratio)
       pad?.clear()
 
-      if (existing) void pad?.fromDataURL(existing, { ratio, width, height })
+      // Prefer what is on the canvas; fall back to what the caller is
+      // holding, which is the case on a fresh mount.
+      const restore = existing ?? valueRef.current
+      if (restore) {
+        void pad?.fromDataURL(restore, { ratio, width, height })
+        setHasInk(true)
+      }
     }
 
     const pad = new SignaturePadLib(canvas, {

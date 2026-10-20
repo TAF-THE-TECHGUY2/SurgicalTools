@@ -18,12 +18,13 @@ const { instances, FakePad } = vi.hoisted(() => {
     listeners: Record<string, () => void> = {}
     empty = true
     cleared = 0
+    restored: string | null = null
 
     constructor() { instances.push(this) }
     addEventListener(name: string, cb: () => void) { this.listeners[name] = cb }
     isEmpty() { return this.empty }
     toDataURL() { return 'data:image/png;base64,SIG' }
-    fromDataURL() {}
+    fromDataURL(data: string) { this.restored = data; this.empty = false }
     clear() { this.empty = true; this.cleared++ }
     on() {}
     off() {}
@@ -39,13 +40,24 @@ interface FakePadShape {
   listeners: Record<string, () => void>
   empty: boolean
   cleared: number
+  restored: string | null
   isEmpty(): boolean
   draw(): void
 }
 
 vi.mock('signature_pad', () => ({ default: FakePad }))
 
-beforeEach(() => { instances.length = 0 })
+beforeEach(() => {
+  instances.length = 0
+
+  // jsdom lays everything out at zero, and the component skips sizing (and so
+  // skips restoring) a canvas with no width — correct in a browser, useless
+  // here. Give it a box.
+  vi.spyOn(HTMLCanvasElement.prototype, 'getBoundingClientRect').mockReturnValue({
+    width: 400, height: 52, top: 0, left: 0, right: 400, bottom: 52, x: 0, y: 0,
+    toJSON: () => ({}),
+  } as DOMRect)
+})
 
 describe('SignaturePad', () => {
   /**
@@ -75,15 +87,19 @@ describe('SignaturePad', () => {
     render(<Parent />)
     expect(instances).toHaveLength(1)
 
+    // Sizing the canvas on mount clears it once, harmlessly — it is empty.
+    // What must not happen is a clear *after* something has been drawn.
+    const clearsBeforeDrawing = instances[0].cleared
+
     act(() => { instances[0].draw() })
 
     expect(screen.getByTestId('sig').textContent).toBe('data:image/png;base64,SIG')
     expect(screen.getByTestId('at').textContent).toBe('stamped')
 
-    // The pad must be the same instance, never rebuilt, and never cleared:
-    // a rebuild is what blanked the canvas.
+    // The pad must be the same instance and must still hold the stroke: a
+    // rebuild, and the clear that came with it, is what blanked the canvas.
     expect(instances).toHaveLength(1)
-    expect(instances[0].cleared).toBe(0)
+    expect(instances[0].cleared).toBe(clearsBeforeDrawing)
     expect(instances[0].isEmpty()).toBe(false)
   })
 
@@ -124,6 +140,25 @@ describe('SignaturePad', () => {
     act(() => { instances[0].draw() })
     expect(screen.queryByText('Sign here')).toBeNull()
     expect(screen.getByText('Clear')).toBeTruthy()
+  })
+
+  /**
+   * The voucher's step navigation unmounts the sheet. The page keeps the
+   * signature and would still have submitted it, but the cell came back empty
+   * — which reads as having lost it, and invites signing a second time.
+   */
+  it('redraws a signature the caller is still holding when it remounts', () => {
+    const held = 'data:image/png;base64,HELD'
+    const { unmount } = render(<SignaturePad onChange={() => {}} value={held} variant="bare" />)
+    unmount()
+
+    render(<SignaturePad onChange={() => {}} value={held} variant="bare" />)
+
+    const remounted = instances[instances.length - 1]
+    expect(remounted.restored).toBe(held)
+    expect(remounted.isEmpty()).toBe(false)
+    // The prompt must not invite a second signature over one already taken.
+    expect(screen.queryByText('Sign here')).toBeNull()
   })
 
   it('names the reason it is locked', () => {

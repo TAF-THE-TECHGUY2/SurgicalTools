@@ -372,6 +372,9 @@ export default function TransferCreatePage() {
                 <SignaturePad
                   variant="bare"
                   height={52}
+                  // Stepping forward and back rebuilds the canvas; the form
+                  // still holds the signature, so hand it back.
+                  value={recipientSignature}
                   onChange={captureRecipientSignature}
                   disabled={!recipientName.trim()}
                   disabledReason="Enter the recipient's name first"
