@@ -41,18 +41,45 @@ export function SignaturePad({
   // be drawn.
   const [hasInk, setHasInk] = useState(false)
 
+  /**
+   * Held in a ref and deliberately kept out of the effect's dependencies.
+   *
+   * A caller that declares its handler inline hands us a new function on every
+   * render. With onChange in the deps, reporting a stroke re-rendered the
+   * parent, which changed the handler's identity, which tore down and rebuilt
+   * the pad — wiping the stroke that had just been drawn. The signature
+   * vanished the instant it was recorded, and only for callers that had not
+   * memoised their handler, which is the easy mistake to make.
+   */
+  const onChangeRef = useRef(onChange)
+  useEffect(() => { onChangeRef.current = onChange })
+
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
 
     // Scale for crisp lines on high-DPI screens.
     const ratio = Math.max(window.devicePixelRatio || 1, 1)
+
+    /**
+     * Resizing the backing store blanks it, so anything already signed is
+     * re-drawn afterwards. iOS fires resize when the Safari toolbar collapses
+     * on scroll — scrolling down the voucher after signing must not erase the
+     * signature.
+     */
     const resize = () => {
       const { width } = canvas.getBoundingClientRect()
+      if (width === 0) return // laid out at zero (hidden tab, unmounting)
+
+      const pad = padRef.current
+      const existing = pad && !pad.isEmpty() ? pad.toDataURL('image/png') : null
+
       canvas.width = width * ratio
       canvas.height = height * ratio
       canvas.getContext('2d')?.scale(ratio, ratio)
-      padRef.current?.clear()
+      pad?.clear()
+
+      if (existing) void pad?.fromDataURL(existing, { ratio, width, height })
     }
 
     const pad = new SignaturePadLib(canvas, {
@@ -65,7 +92,7 @@ export function SignaturePad({
     padRef.current = pad
     pad.addEventListener('endStroke', () => {
       setHasInk(!pad.isEmpty())
-      onChange(pad.isEmpty() ? '' : pad.toDataURL('image/png'))
+      onChangeRef.current(pad.isEmpty() ? '' : pad.toDataURL('image/png'))
     })
 
     resize()
@@ -74,7 +101,7 @@ export function SignaturePad({
       window.removeEventListener('resize', resize)
       pad.off()
     }
-  }, [onChange, height, variant])
+  }, [height, variant])
 
   /**
    * Detaching the listeners rather than only dimming the canvas: a disabled
@@ -90,17 +117,17 @@ export function SignaturePad({
       if (!pad.isEmpty()) {
         pad.clear()
         setHasInk(false)
-        onChange('')
+        onChangeRef.current('')
       }
     } else {
       pad.on()
     }
-  }, [disabled, onChange])
+  }, [disabled])
 
   const clear = () => {
     padRef.current?.clear()
     setHasInk(false)
-    onChange('')
+    onChangeRef.current('')
   }
 
   const bare = variant === 'bare'
